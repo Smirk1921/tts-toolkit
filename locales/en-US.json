@@ -1,0 +1,143 @@
+{
+  "cli": {
+    "program": {
+      "description": "TTS mod toolkit"
+    },
+    "help": {
+      "usage": "Usage:",
+      "arguments": "Arguments:",
+      "options": "Options:",
+      "commands": "Commands:",
+      "globalOptions": "Global options:"
+    },
+    "option": {
+      "lang": "Output language (zh-CN | en-US)",
+      "dev": "Development mode (warn about missing translations on stderr)",
+      "datadir": "Explicitly set the TTS data directory (Mods)",
+      "version": "output the version number",
+      "help": "display help for command"
+    },
+    "command": {
+      "help": {
+        "description": "display help for a command"
+      },
+      "status": {
+        "description": "Check the TTS editor connection and the current save"
+      },
+      "config": {
+        "description": "View or write toolkit configuration",
+        "datadir": {
+          "description": "Locate and select the TTS data directory (Mods)",
+          "option": {
+            "set": "Write the given path straight into the config file"
+          }
+        }
+      },
+      "pull": {
+        "description": "Pull all Lua scripts and UI files from the current save into a directory",
+        "argument": {
+          "dir": "Output directory (created when missing)"
+        }
+      },
+      "exec": {
+        "description": "Run a Lua snippet in the current save (global script)",
+        "argument": {
+          "lua": "Lua code to execute, e.g. 'return 1+1'"
+        }
+      },
+      "assets": {
+        "description": "Inventory asset URLs referenced by the save (optional liveness check)",
+        "option": {
+          "check": "Check URL reachability over the network (HTTP 2xx)",
+          "sample": "Only check a random sample of N URLs"
+        }
+      }
+    },
+    "error": {
+      "invalidLang": "Invalid language option: {lang} (supported: zh-CN, en-US)",
+      "unknownCommand": "Unknown command: {command} (run --help to list commands)",
+      "unknownOption": "Unknown option: {option} (run --help to list options)",
+      "missingArgument": "Missing required argument or option value: {argument} (run --help for usage)",
+      "emptyOptionValue": "Option {option} must not be empty"
+    },
+    "status": {
+      "connected": "Connected to the TTS editor (port {port})",
+      "portInUse": "Port {port} is already in use: close the program occupying it (usually another tts-toolkit instance) and retry",
+      "notRunning": "No running TTS editor detected: start the game and open the Editor first",
+      "version": "Script engine version: {version}",
+      "objects": "Objects in the current save: {count}"
+    },
+    "pull": {
+      "done": "Pull complete: {scripts} script(s), {ui} UI file(s)",
+      "empty": "Nothing to pull: already up to date",
+      "target": "Output directory: {dir}",
+      "notConnected": "Cannot pull scripts: not connected to the TTS editor"
+    },
+    "exec": {
+      "timeout": "Lua execution timed out after {seconds}s: the script may be stuck in a loop, or blocked by an in-game dialog",
+      "luaError": "Lua execution failed: {message}",
+      "multipleReturns": "Lua returned {count} values; only the first is used (the rest are ignored)",
+      "notConnected": "Cannot run Lua: not connected to the TTS editor",
+      "luaErrorObject": "Failing object guid: {guid}"
+    },
+    "assets": {
+      "summary": "Asset check finished: {alive} alive, {dead} dead",
+      "checking": "Checking asset availability…",
+      "alive": "Alive: {url}",
+      "dead": "Dead: {url}",
+      "inventory": "{urls} distinct URL(s), {refs} reference(s)",
+      "empty": "No asset URL references found in the current save",
+      "byDomain": "Grouped by domain:",
+      "domain": "  {domain}: {urls} URL(s), {refs} reference(s)",
+      "domainUnknown": "(unparsable domain)",
+      "invalidSample": "Invalid sample size: {value} (must be an integer ≥ 1)",
+      "checkingDetail": "Checking assets: {total} total, sampling {sampled}…",
+      "aliveCount": "Alive (HTTP 2xx): {count}",
+      "deadCount": "Dead: {count}",
+      "deadList": "Dead links (showing first {shown}):",
+      "deadMore": "  …{count} more not shown",
+      "deadDetail": "    Reason: {detail}",
+      "notConnected": "Cannot inventory assets: not connected to the TTS editor"
+    },
+    "config": {
+      "datadir": {
+        "title": "Select the TTS data directory",
+        "multiple": "Multiple usable TTS data directories found:",
+        "selected": "Selected data directory: {path}",
+        "written": "Data directory written to config: {path} (config file: {config})",
+        "found": "Found {count} TTS data director(ies):",
+        "candidate": "  {index}. {path} (source: {source}, {subdirs} valid subdir(s))",
+        "source": {
+          "explicit": "explicit",
+          "config": "config file",
+          "registry": "registry",
+          "installDir": "install dir",
+          "documents": "user documents",
+          "macos": "macOS",
+          "linux": "Linux"
+        },
+        "none": "No valid TTS data directory found: make sure the game is installed, or pass --datadir <path>",
+        "prompt": "Enter a number and press Enter (1-{max}; press Enter to cancel):",
+        "invalidChoice": "Invalid input: enter a number between 1 and {max}",
+        "cancelled": "Cancelled; nothing was written",
+        "nonInteractive": "Not an interactive terminal: use --set <path> to set the data directory",
+        "recommend": "Recommended data directory: {path}",
+        "confirm": "Write it to the config? (y/N)",
+        "writtenPath": "Data directory written to config: {path}"
+      }
+    }
+  },
+  "error": {
+    "portInUse": "Port {port} is already in use: {detail}",
+    "notConnected": "Not connected to the TTS editor (port {port})",
+    "timeout": "Operation timed out after {seconds}s: {detail}",
+    "jsonParse": "JSON parse failed: {detail}",
+    "invalidDatadir": "Invalid TTS data directory: {path}",
+    "generic": "Operation failed: {message}"
+  },
+  "common": {
+    "yes": "Yes",
+    "no": "No",
+    "confirm": "Confirm"
+  }
+}

@@ -224,7 +224,12 @@
     "SKELETON_MISSING": "缺少骨架存档 .tts/skeleton.json，请先运行 tts pack unpack：{msg}",
     "UNPACK_FAILED": "解包失败：{msg}",
     "TTSMOD_INVALID": ".ttsmod 文件无效或已损坏：{msg}",
-    "SAVE_INVALID": "存档 JSON 无效：{msg}"
+    "SAVE_INVALID": "存档 JSON 无效：{msg}",
+    "pack": {
+      "atlasTooManyCells": "需要 {minCells} 个格子，超过单张图集的上限 {maxSlots} 格",
+      "atlasGridTooFine": "图集 {imageWidth}x{imageHeight} 按 {columns}x{rows} 网格切分后单格宽或高为 0",
+      "atlasInvalidGrid": "图集网格声明不合法：{detail}"
+    }
   },
   "common": {
     "yes": "是",

@@ -224,7 +224,12 @@
     "SKELETON_MISSING": "Missing .tts/skeleton.json; run tts pack unpack first: {msg}",
     "UNPACK_FAILED": "Unpack failed: {msg}",
     "TTSMOD_INVALID": "Invalid or corrupted .ttsmod file: {msg}",
-    "SAVE_INVALID": "Invalid save JSON: {msg}"
+    "SAVE_INVALID": "Invalid save JSON: {msg}",
+    "pack": {
+      "atlasTooManyCells": "Needs {minCells} cells, exceeding the single-atlas limit of {maxSlots}",
+      "atlasGridTooFine": "Atlas {imageWidth}x{imageHeight} is too small for a {columns}x{rows} grid: a cell would be 0 pixels wide or tall",
+      "atlasInvalidGrid": "Invalid atlas grid declaration: {detail}"
+    }
   },
   "common": {
     "yes": "Yes",

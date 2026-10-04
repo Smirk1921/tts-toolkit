@@ -2,7 +2,7 @@
 
 面向《桌游模拟器》（Tabletop Simulator）图包作者的命令行工具：通过 TTS 的**外部编辑器协议**直连运行中的游戏，只读地检查连接状态、执行 Lua、拉取全部脚本与 UI、盘点素材 URL；并支持**离线**的图包工作区管理（unpack / build / pull / push / diff），所有面向用户的输出支持中文 / 英文双语。
 
-> 当前进度：阶段 1（基础设施 + 协议层 + 只读 CLI）+ 阶段 2A（图包工作区）。`status / exec / pull / assets / config` 等命令只读；`pack init/unpack/build` 离线；`pack pull/diff` 与运行中 TTS 交互；`pack push` 为骨架（阶段 5 才实际写入）。
+> 当前进度：阶段 1（基础设施 + 协议层 + 只读 CLI）+ 阶段 2A（图包工作区）+ 2B（卡牌图集）+ 2C（多图包与版本控制）+ 阶段 3（素材导入 / 图床 / 打包分发，窗口 C）。`status / exec / pull / assets / config` 等命令只读；`pack init/unpack/build/export/import/sync-upstream`、`import / host / fetch / migrate / deck / vcs / review` 离线或按需联网；`pack pull/diff` 与运行中 TTS 交互；`pack push` 为骨架（阶段 5 才实际写入）。
 
 ## 环境要求
 
@@ -134,7 +134,7 @@ $ tts pack build --root ./my-pack --dry-run
 - **`tts pack diff`** 对比工作区与运行中 TTS 的脚本/UI 差异（added/modified/deleted）。
 - **`tts pack build`** 把工作区合成 TTS 可加载的存档 JSON（约束 8：读 skeleton + 按 GUID 定点替换，未改动对象与骨架逐字节一致）；`--dry-run` 只打印摘要。
 
-工作区契约文档见 [`docs/schemas/`](./docs/schemas/)（`pack.yaml` / `deck.yaml` / `assets.yaml` / `cards.csv` / `objects.csv` / `registry.yaml` 六份，B2/B3 必读）。
+工作区契约文档见 [`docs/schemas/`](./docs/schemas/)（`pack.yaml` / `deck.yaml` / `assets.yaml` / `cards.csv` / `objects.csv` / `registry.yaml` 六份，B2/B3 必读；另加阶段 3 的 `import.yaml` / `host` / `ttsmod` 三份）。
 
 ### 7. 卡牌图集：`tts deck *`（阶段 2B 新增）
 
@@ -249,6 +249,193 @@ lfs 已禁用（.gitattributes 的 lfs 规则已清空，pack.yaml 已写为 dis
 - **冲突语义化反查**：从 `cards.csv` / `objects.csv` 反查冲突文件对应的 CardID / sheet_id / slot / sheet_source；**绝不替用户选边**（不自动跑 `--ours/--theirs`）。
 - **`vcs commit` 自动 message**：基于 `analyzeStatus` 的语义化结果，按"卡图 > 卡表 > 脚本 > UI > 素材 > 元数据"优先级取前 3 条，超过 3 条末尾加"等 N 项改动"。
 
+### 9. 素材导入、图床、体检迁移与打包分发（阶段 3 新增）
+
+阶段 3（窗口 C）补齐"素材从哪来 → 传到哪去 → 怎么打成自包含分发包"这条链路。命令分四组：
+
+| 组 | 命令 | 联网 / 环境 |
+| --- | --- | --- |
+| 素材导入 | `tts import` | 全离线 |
+| 图床 | `tts host list` / `tts host check` / `tts assets upload` | `list` 离线；`check` / `upload` 按图床联网 |
+| 体检与迁移 | `tts fetch` / `tts migrate` | 联网 |
+| 打包分发 | `tts pack export` / `tts pack import` / `tts pack sync-upstream` | 离线（`export` 的扩展名探测可选联网） |
+| 审批门禁 | `tts review prepare` / `tts review status` / `tts review gate` | `prepare` / `gate` 离线；`status` 需审批工具 |
+
+> 本节示例中 `import` / `host list` / `pack export` / `pack import` 为 2026-10-05 在本机实测
+> （演示夹具，非真实工坊图包）；`host check` / `fetch` / `migrate` / `assets upload` / `review`
+> 为按 t() 模板展示的用法示例（依赖网络 / 图床 / 审批工具环境）。
+
+#### 9.1 素材导入：`tts import <清单> [--pack <工作区>] [--dry-run]`
+
+按 `import.yaml` 把用户已备好的成图归位到工作区（切图来源走 `tts deck slice`，不经过这里）。
+清单里的**相对路径相对清单文件所在目录**解析，`--pack` 给工作区根（缺省 `.`）。
+
+```console
+$ tts import ./import.yaml --pack ./packs/演示包 --dry-run
+导入完成：卡堆 1 个（新增卡 2 张），素材 1 个，复制文件 5 个
+  卡堆 冒险牌堆：新增 2 张卡，图集 1 张（新建）  D:\...\packs\演示包\decks\冒险牌堆
+  素材 tile 地图板块A：asset_id imp-964dedd7（新建）
+（dry-run：未写入任何文件，以上为规划结果）
+
+$ tts import ./import.yaml --pack ./packs/演示包      # 实落盘（去掉最后一行提示）
+```
+
+要点：
+
+- 全部校验（清单 schema、文件存在性、图像可读、**拒 CMYK**）与规划**先于任何落盘**完成，
+  失败即报错并指出具体条目，**不静默跳过**；坏清单的错误码见契约文档。
+- 只写 `decks/<名>/cards.csv` 与 `objects/objects.csv`（**不写 deck.yaml**）；已有行的
+  `card_id` / `asset_id` 永不改变，新增卡从已有最大 key + 1 另开新图集。
+- 契约：`docs/schemas/import.yaml.md`。
+
+#### 9.2 图床：`tts host list` / `tts host check [--pack <工作区>] [--host <id>]`
+
+`host list` 汇总三个来源：内置默认 `steamcloud`、全局配置声明的图床、`~/.tts-toolkit/hosts/*.js`
+插件。`host check` 从工作区盘点素材 URL（`.tts/skeleton.json` + `assets.yaml` 合并去重）逐个做
+存活检测，**有死链时退出码 1**（可直接当健康检查用）。
+
+```console
+$ tts host list
+可用图床 1 个：
+  steamcloud  内置（默认）
+    可删除：否  单文件上限：不限  格式：-
+
+$ tts host check --pack ./packs/第七大陆
+开始检测：130 个 URL（骨架 130 条 / 台账 0 条），图床 steamcloud
+  死链：https://example.com/gone.png（HTTP 404）
+检测完成：共 130 个，存活 129，死链 1
+```
+
+要点：
+
+- 图床类型：`steamcloud`（默认，上传可能需按提示去游戏内 `Cloud Manager → Upload All` 手动完成，
+  **这是可接受结果不是失败**）、`s3`（R2 / AWS / MinIO，可全自动）、`local`（仅本机测试）、
+  `command`（调用自定义命令上传，万能逃生口；也可写 `~/.tts-toolkit/hosts/<名>.js` 插件）。
+- **配置错误绝不静默回退默认图床**：未知 id 报 `HOST_NOT_FOUND`，配置 / 插件损坏报
+  `HOST_CONFIG_INVALID` / `HOST_PLUGIN_*`。
+- 契约与完整可跑的 rclone 示例：`docs/schemas/host.md`。
+
+#### 9.3 素材体检与迁移：`tts fetch` / `tts migrate --to <图床>`
+
+`fetch` 做"素材健康报告"，把 URL 分成正常 / 可迁移（老 Steam Cloud 域名、Google Drive 转直链、
+Dropbox、paste 站 raw）/ 死链 / 需人工四类并给修复动作；`migrate` 按 `--to` 指定的图床
+**下载 → 上传 → 递归改写**工作区里全部存档形态 JSON（骨架 + `decks/**/data.json` +
+`objects/**/data.json`），并同步 `assets.yaml` 与 `objects.csv.source`。
+
+```console
+$ tts fetch ./packs/第七大陆/.tts/skeleton.json
+从清单读取 URL：./packs/第七大陆/.tts/skeleton.json（132 条）
+体检完成：共 132 个 URL（正常 100 / 可迁移 20 / 死链 8 / 需人工 4）
+可迁移（20 条）：
+  http://cloud-3.steamusercontent.com/ugc/...  [老式 Steam Cloud]  修复：迁移域名
+    建议改为：https://steamusercontent-a.akamaihd.net/ugc/...
+...
+
+$ tts migrate --to s3 --pack ./packs/第七大陆
+开始迁移：图床 s3，52 个 URL，3 个存档文件
+  已迁移：https://old.example.com/a.png → https://cdn.example.com/tts/...
+  跳过（不可下载）：file:///C:/Users/...（本地路径无法下载，需重新上传）
+迁移完成：成功 50 / 跳过 1 / 失败 1 / 待人工 0；共改写 118 处 URL，涉及 3 个文件
+```
+
+要点：仍有失败 URL 时 `migrate` 退出码 1；`file:` / `{lang}` 变体等不可下载形态原样跳过并列出原因；
+Steam Cloud 的 pending 结果不算失败，按"待人工上传"报告。迁移只改工作区，改完重新
+`tts pack build` 即可产出引用新 URL 的存档。
+
+#### 9.4 素材上传：`tts assets upload [--pack <工作区>] [--host <id>]`
+
+扫 `decks/`、`objects/` 下的素材，逐个算 sha256 与 `assets.yaml` 台账比对，**只上传新增或内容
+变化的文件**，成功后回写台账与 `objects.csv` 的 `source` 列。
+
+```console
+$ tts assets upload --pack ./packs/第七大陆 --host rclone-cdn
+上传目标图床：rclone-cdn（pack.yaml 声明：steamcloud）
+扫描完成：待上传 3 个，未变化跳过 12 个
+  已上传 decks/冒险牌堆/001_正面.png → https://cdn.example.com/tts/decks/冒险牌堆/001_正面.png
+已更新素材台账：D:\...\packs\第七大陆\assets.yaml
+上传完成：成功 3 / 跳过 12 / 待人工 0 / 失败 0
+```
+
+要点：`--host` 覆盖 `pack.yaml.host`；`pack.yaml.host` 的 `imgur / gdrive / dropbox / custom`
+不是注册图床 id，会提示改用 `--host`。用内置 `steamcloud` 上传时返回"待人工上传"提示
+（文件已备好在 `.tts/steamcloud-pending/`，去游戏内点 `Upload All`）。有失败时退出码 1。
+
+#### 9.5 打包分发：`tts pack export` / `pack import` / `pack sync-upstream`
+
+**导出**：把工作区合成存档 JSON 后打成自包含 `.ttsmod`（素材条目名 = TTS 缓存键，接收方解压到
+`Mods` 的父目录即可离线命中，**存档 JSON 里的 URL 一个字不改**）。
+
+```console
+$ tts pack export ./packs/演示包 -o 演示图包.ttsmod --datadir "D:\...\Tabletop Simulator_Data\Mods"
+已导出 D:\...\演示图包.ttsmod：条目 4 个，1.95 KB，素材 1 条，跳过 0 条
+随包说明：README.txt
+```
+
+包内布局（`readZip` 实测）：
+
+```text
+Mods/Workshop/演示图包.json                存档 JSON，逐字节原样（URL 一个字不改）
+Mods/Images/httpsexamplecomimageshero.png  素材条目名 = sanitize(url) + 扩展名
+manifest.json                              工具 / 版本 / 时间 / 源工坊 ID / 素材清单（新增根条目）
+README.txt                                 中英双语随包说明（--readme zh|en|both|none，默认 both）
+```
+
+**导入**：解压到 `--into`（**`Mods` 的父目录**）；非 `Mods/` 条目（如 `Saves/`）解到 `--saves`
+（缺省 `<into>/Saves`）。**已存在的文件不覆盖**，逐个列出。
+
+```console
+$ tts pack import 演示图包.ttsmod --into D:\tts-restore
+已导入 演示图包.ttsmod → D:\tts-restore（写出 3 / 共 4 个文件条目）
+包内工坊存档 1 个：
+  D:\tts-restore\Mods\Workshop\演示图包.json
+如需建工作区，可运行：tts pack unpack "D:\tts-restore\Mods\Workshop\演示图包.json"
+
+$ tts pack import 演示图包.ttsmod --into D:\tts-restore      # 再导入一次
+已导入 演示图包.ttsmod → D:\tts-restore（写出 0 / 共 4 个文件条目）
+已存在未覆盖 3 个：
+  Mods/Workshop/演示图包.json
+  Mods/Images/httpsexamplecomimageshero.png
+  README.txt
+  ...
+```
+
+**上游同步**：`pack import <工坊ID> --as-upstream` 把上游快照落到 `upstream` 分支；
+`pack sync-upstream` 拉新快照并合并回当前分支，**冲突只报告不选边**（退出码 1 待人工解决）。
+
+```console
+$ tts pack import 379104394 --as-upstream --pack ./packs/第七大陆 --snapshot ./upstream-v2.json
+已导入上游快照 ./upstream-v2.json（分支 upstream，提交 3ab12cd）
+
+$ tts pack sync-upstream --pack ./packs/第七大陆
+已同步上游快照 ...（当前分支 zh-cn，upstream 提交 9e8f7a6）
+已将 upstream 合并回分支 zh-cn（干净合并）
+```
+
+要点：`--strict` 缺任一素材即报错、不产出不完整的包；默认行为是"只打包本地已有的，**缺的逐条列出**"；
+`-o` 缺省按 `<图包名> (<工坊ID>).ttsmod` 命名；`--datadir` 提供 TTS 的 `Mods` 目录后，扩展名推导
+才有本地缓存可查。契约：`docs/schemas/ttsmod.md`。
+
+#### 9.6 审批门禁：`tts review prepare` / `status` / `gate`
+
+与「图包审批工具」松耦合联动：`prepare` 生成 `approval.config.json`（素材 id = 文件名，
+零转换）；`status` 调审批工具总览（服务在跑走 HTTP，否则走 `python agent.py`）；`gate` 读审批结果做
+**发布门禁——全 pass 才允许打包 / 上传**，不过时逐条列出拦截理由并退出码 1。
+
+```console
+$ tts review prepare --pack ./packs/第七大陆 --deck 冒险牌堆 --b ./render
+审批配置已写入：D:\...\packs\第七大陆\.tts\approval\approval.config.json
+  素材集 冒险牌堆：源A D:\...\packs\第七大陆\decks\冒险牌堆 → 源B D:\...\render
+  审批数据目录：D:\...\packs\第七大陆\.tts\approval\data
+
+$ tts review gate --pack ./packs/第七大陆
+门禁评估：素材集 冒险牌堆，共 70 条（pass 69 / reject 1 / flag 0 / 未审 0 / 过期 0）
+拦截项 1 条：
+  003_正面.png：审批未通过（reject）
+门禁未通过：请先处理上面的拦截项（重新审批后重跑本命令）
+```
+
+（全部 pass 时输出 `门禁通过：全部素材已审批通过，可以打包 / 上传` 并退出码 0。）
+
 ### 全局选项
 
 | 选项 | 说明 |
@@ -278,7 +465,7 @@ TTS 的外部编辑器协议只认**一个** 39998 端口监听者。本工具�
 
 ## 代理配置
 
-只有 `tts assets --check` 的联网探测会用到代理（`src/assets/check.ts` 在调用时读取
+只有联网的探测 / 下载会用到代理：`tts assets --check`、`tts host check`、`tts fetch`、`tts migrate`，以及 `tts pack export` 的扩展名 HTTP 探测（`src/assets/check.ts` / `src/assets/fetch.ts` / `src/archive/detect.ts` 在调用时读取
 `https_proxy`，其次 `HTTPS_PROXY`，空值视为未设置）。TTS 协议本身始终连接
 `127.0.0.1:39999`，**不受代理影响**。
 
@@ -344,15 +531,21 @@ npm run build                  # tsc -p . → dist/
 src/
   protocol/   消息类型、端口与独占检测、编辑器服务器（39998）、TTS 客户端（39999）
   session/    Lua 执行（execJson）、脚本快照读写、Lua 片段生成
-  assets/     snake_case ↔ CamelCase 字段映射、素材盘点、URL 存活检测
+  assets/     snake_case ↔ CamelCase 字段映射、素材盘点、URL 存活检测、下载修复与迁移（阶段 3）
   datadir/    TTS 数据目录探测与配置读写
   i18n/       极简 t(key, params) 双语实现
-  pack/       图包工作区：layout / packyaml / manifest / init / unpack / pull / push / diff / build（阶段 2A）
-  cli/        commander 命令注册（status / config / pull / exec / assets / pack）
-docs/schemas/ pack.yaml / deck.yaml / assets.yaml 契约文档（B2/B3 必读）
+  pack/       图包工作区：layout / packyaml / manifest / init / unpack / pull / push / diff / build / import（阶段 2A / 3）
+  deck/       卡牌图集切片 / 拼接 / 校验、cards.csv 与 objects.csv（阶段 2B）
+  vcs/        git 语义化 status / commit / verify / lfs / size（阶段 2C）
+  archive/    .ttsmod 读写、TTS 缓存键、扩展名三级推导（阶段 3）
+  host/       图床统一接口与四种内置实现：steamcloud / s3 / local / command（阶段 3）
+  review/     与图包审批工具的联动：prepare 配置 / status 调用 / gate 门禁（阶段 3）
+  cli/        commander 命令注册（status / config / pull / exec / assets / pack / deck / vcs / import / host / fetch / migrate / review）
+docs/schemas/ 契约文档：pack.yaml / deck.yaml / assets.yaml / cards.csv / objects.csv / registry.yaml
+              + 阶段 3 的 import.yaml / host / ttsmod（共九份）
 locales/      zh-CN.json、en-US.json
 tests/unit/   不依赖 TTS 的单元测试
-tests/integration/  需 TTS 运行的验收测试
+tests/integration/  验收骨架（phase1 需 TTS；phase2b / 2c / 3 为逐用例 it.skip 清单）
 ```
 
 约定：TypeScript ESM（`.ts`，import/export）、target ES2022 / module NodeNext / strict；
@@ -364,7 +557,14 @@ tests/integration/  需 TTS 运行的验收测试
 通过子进程调用已构建的 CLI。因为需要真实 TTS，**默认整组 `describe.skip`**，
 `npm test` 与 `npm run test:integration` 都会跳过它（输出 10 skipped）。
 
-手动开启步骤：
+`tests/integration/phase2b.acceptance.test.ts` / `phase2c.acceptance.test.ts` /
+`phase3.acceptance.test.ts` 是后续阶段的验收骨架：**逐用例 `it.skip`**（不是 describe.skip），
+每个用例体只有 TODO 与一条 `todo(...)` 守卫（未实现就打开会明确失败，不给假绿）。开启方式：
+按用例内 TODO 装配夹具后删掉该用例的 `.skip`，再跑 `npx vitest run tests/integration/<文件>`
+（或 `npm run test:integration`）。phase3 的 12 个场景覆盖 import / host / migrate / pack export /
+pack import / 扩展名推导 / review 门禁 / sync-upstream，多数场景全离线。
+
+手动开启 phase1 的步骤：
 
 1. 确保已 `npm run build`；
 2. 启动 TTS 并加载图包存档；

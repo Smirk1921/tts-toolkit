@@ -106,6 +106,39 @@
           "option": {
             "root": "图包索引根目录（默认当前目录）"
           }
+        },
+        "export": {
+          "description": "把图包工作区打成自包含 .ttsmod（存档 JSON + 素材 + manifest + 随包说明）",
+          "argument": {
+            "pack": "图包工作区根目录"
+          },
+          "option": {
+            "out": "输出 .ttsmod 路径（缺省 <图包名> (<工坊ID>).ttsmod，写当前目录）",
+            "strict": "严格模式：缺任一素材即报错，不产出不完整的包",
+            "readme": "随包说明语言：zh | en | both（默认）| none"
+          }
+        },
+        "import": {
+          "description": "导入 .ttsmod 到 Mods 父目录（<文件.ttsmod>），或把上游工坊快照落到 upstream 分支（<工坊ID> --as-upstream）",
+          "argument": {
+            "target": "文件.ttsmod 路径，或配合 --as-upstream 使用的工坊 ID"
+          },
+          "option": {
+            "asUpstream": "按上游快照导入：位置参数解释为工坊 ID，快照落到 upstream 分支（只读快照，不做合并）",
+            "into": ".ttsmod 形态：Mods 目录的父目录（解压目标，默认当前目录）",
+            "saves": ".ttsmod 形态：非 Mods/ 条目（如 Saves/）的解压目标（缺省 <into>/Saves）",
+            "pack": "上游形态：图包工作区根目录",
+            "snapshot": "上游形态：显式快照文件（存档 JSON / .ttsmod），优于按工坊 ID 探测",
+            "packsRoot": "上游形态：.registry.yaml 所在的 packs_root（缺省图包根的父目录）"
+          }
+        },
+        "syncUpstream": {
+          "description": "拉上游新快照并合并回当前分支（冲突只报告不选边，退出码 1）",
+          "option": {
+            "pack": "图包工作区根目录",
+            "snapshot": "显式快照文件（存档 JSON / .ttsmod），优于按工坊 ID 探测",
+            "packsRoot": ".registry.yaml 所在的 packs_root（缺省图包根的父目录）"
+          }
         }
       },
       "deck": {
@@ -237,6 +270,89 @@
         "option": {
           "check": "联网检查 URL 是否可访问（HTTP 2xx）",
           "sample": "只随机抽样检测 N 个 URL"
+        },
+        "upload": {
+          "description": "把工作区里改动的素材上传到图床，并回写 assets.yaml 台账与 objects.csv 的 source",
+          "option": {
+            "pack": "图包工作区根目录",
+            "host": "图床 id 覆盖（缺省用 pack.yaml 的 host 字段）"
+          }
+        }
+      },
+      "import": {
+        "description": "按 import.yaml 清单把素材导入图包工作区",
+        "argument": {
+          "manifest": "import.yaml 清单文件路径"
+        },
+        "option": {
+          "pack": "图包工作区根目录（清单内相对路径相对清单所在目录解析）",
+          "dryRun": "只预览规划结果，不复制文件、不写 cards.csv / objects.csv"
+        }
+      },
+      "host": {
+        "description": "图床列表与素材存活检测",
+        "list": {
+          "description": "列出可用图床（内置 + 全局配置声明 + 插件目录）"
+        },
+        "check": {
+          "description": "盘点图包素材 URL 并用指定图床做存活检测，报告死链（有死链时退出码 1）",
+          "option": {
+            "pack": "图包工作区根目录（URL 来源：.tts/skeleton.json + assets.yaml）",
+            "host": "用于检测的图床 id（缺省 steamcloud，即内置 HTTP 探测）"
+          }
+        }
+      },
+      "fetch": {
+        "description": "体检素材 URL（正常 / 可迁移 / 死链 / 需人工处理），给出修复动作",
+        "argument": {
+          "source": "URL、存档 JSON / 骨架，或一行一个 URL 的纯文本清单"
+        },
+        "option": {
+          "pack": "额外并入该图包工作区的 URL（.tts/skeleton.json + assets.yaml）"
+        }
+      },
+      "migrate": {
+        "description": "把工作区素材迁移到目标图床：下载 → 上传 → 改写骨架 / data.json / 台账里的 URL",
+        "option": {
+          "to": "目标图床 id（内置 steamcloud/s3/local/command，或配置声明的图床名）",
+          "pack": "图包工作区根目录"
+        }
+      },
+      "review": {
+        "description": "与「图包审批工具」联动：生成审批配置 / 调用总览 / 发布门禁",
+        "prepare": {
+          "description": "生成审批配置 approval.config.json（源A = deck 目录，源B = --b 指定的新版渲染目录）",
+          "option": {
+            "pack": "图包工作区根目录",
+            "deck": "decks/ 下的目录名（缺省：恰好一个 deck 时自动选中）",
+            "set": "素材集 id（缺省取 deck 目录名）",
+            "name": "素材集显示名（缺省取 deck.yaml 的 name）",
+            "a": "源A（旧版图）根目录（缺省取 deck 目录）",
+            "b": "源B（新版渲染）根目录（必填）",
+            "labelA": "源A 显示标签",
+            "labelB": "源B 显示标签",
+            "tags": "问题标签（逗号分隔）",
+            "host": "审批服务监听地址（缺省 127.0.0.1）",
+            "port": "审批服务监听端口（缺省 8765）"
+          }
+        },
+        "status": {
+          "description": "调审批工具总览并输出 JSON（服务在跑走 HTTP，否则走 python agent.py）",
+          "option": {
+            "pack": "图包工作区根目录",
+            "approvalRoot": "审批工具仓库根（含 agent.py）；走 --server 时可省略",
+            "offline": "强制 CLI 直连文件（给 agent.py 传 --offline）",
+            "server": "审批服务基址（如 http://127.0.0.1:8765）"
+          }
+        },
+        "gate": {
+          "description": "读审批结果做发布门禁：全 pass 才放行（不过时退出码 1）",
+          "option": {
+            "pack": "图包工作区根目录",
+            "set": "素材集 id（配置里只有一个素材集时可省略）",
+            "bRoot": "源B（成品）目录覆盖（缺省取配置里该素材集的 b.root）",
+            "dataDir": "审批数据目录覆盖（缺省取配置里的 data_dir）"
+          }
         }
       }
     },
@@ -304,6 +420,38 @@
       "open": {
         "notFound": "未在 .registry.yaml 中找到图包 {dir}",
         "done": "已打开 {path}"
+      },
+      "export": {
+        "done": "已导出 {outPath}：条目 {entries} 个，{size}，素材 {included} 条，跳过 {skipped} 条",
+        "readme": "随包说明：{entries}",
+        "skippedHeader": "被跳过的素材 {count} 条：",
+        "warning": "  {message}",
+        "invalidReadme": "--readme 只接受 zh / en / both / none（收到 {value}）",
+        "noDatadirNote": "提示：未找到 TTS 数据目录（Mods），素材扩展名将只按 URL 路径 / 联网 Content-Type 推导；可用全局 --datadir 指定"
+      },
+      "importFile": {
+        "done": "已导入 {file} → {into}（写出 {extracted} / 共 {total} 个文件条目）",
+        "skippedExisting": "已存在未覆盖 {count} 个：",
+        "skippedExistingItem": "  {path}",
+        "skippedUnsafe": "因路径不安全（.. / 绝对路径 / 盘符）跳过 {count} 个",
+        "workshopSaves": "包内工坊存档 {count} 个：",
+        "workshopSaveItem": "  {path}",
+        "unpackHint": "如需建工作区，可运行：tts pack unpack \"{path}\"",
+        "warning": "  {message}",
+        "needTarget": "请给出 .ttsmod 文件路径，或配合 --as-upstream 给出工坊 ID",
+        "numericTarget": "{target} 是纯数字：若是工坊 ID 请加 --as-upstream（tts pack import {target} --as-upstream）；若是 .ttsmod 请给完整文件路径"
+      },
+      "upstream": {
+        "imported": "已导入上游快照 {snapshot} → upstream 分支（当前分支 {branch}，提交 {commit}）",
+        "importedNoChange": "上游快照与 upstream 分支现状一致，未产生新提交",
+        "synced": "已同步上游快照 {snapshot}（当前分支 {branch}，upstream 提交 {commit}）",
+        "syncedNoChange": "上游快照与 upstream 分支现状一致，未产生新提交",
+        "merged": "已将 upstream 合并回分支 {branch}（干净合并）",
+        "mergeSkipped": "当前就在 upstream 分支上，未执行合并",
+        "conflictsHeader": "合并冲突 {count} 处（请人工解决；本工具不替用户选边）：",
+        "cardsCsvWarning": "注意：cards.csv 本身冲突，必须先解决它再处理其他冲突",
+        "conflictHint": "解决后执行 git add <文件> 并 git commit 完成合并（放弃合并可用 git merge --abort）",
+        "needWorkshopId": "--as-upstream 需要正整数工坊 ID 作为位置参数"
       }
     },
     "deck": {
@@ -401,7 +549,20 @@
       "deadList": "失效列表（显示前 {shown} 条）：",
       "deadMore": "  …另有 {count} 条未显示",
       "deadDetail": "    原因：{detail}",
-      "notConnected": "无法盘点素材：尚未连接到 TTS 编辑器"
+      "notConnected": "无法盘点素材：尚未连接到 TTS 编辑器",
+      "upload": {
+        "hostSelected": "上传目标图床：{host}（pack.yaml 声明：{declared}）",
+        "hostNotResolvable": "无法解析图床 {host}：pack.yaml 的 host 需是内置图床 id，或用 --host 指定配置声明 / 插件提供的图床 id",
+        "scan": "扫描完成：待上传 {candidates} 个，未变化跳过 {skipped} 个",
+        "uploaded": "  已上传 {file} → {url}",
+        "pending": "  待人工上传 {file}：{hint}",
+        "failed": "  上传失败 {file}：{reason}",
+        "more": "  …另有 {count} 条未显示",
+        "done": "上传完成：成功 {uploaded} / 跳过 {skipped} / 待人工 {pending} / 失败 {failed}",
+        "ledger": "已更新素材台账：{path}",
+        "noUrl": "图床未返回 {file} 的 URL",
+        "costWarning": "⚠️ 首次推送前的提示：\n   你的仓库启用了 git-lfs，推送二进制素材会消耗远端 LFS 额度。\n   当前主流托管的免费额度：GitHub 1GB 存储 + 1GB/月带宽；Gitee 500MB 存储；GitLab 10GB 存储（自托管无限制）。\n   当前仓库 lfs 对象估算：{estimate}。\n   如担心额度：可用 tts vcs lfs disable 改为普通 git、自托管 Gitea / GitLab，或把素材外置。"
+      }
     },
     "config": {
       "datadir": {
@@ -428,6 +589,86 @@
         "recommend": "推荐数据目录：{path}",
         "confirm": "是否写入配置？(y/N)",
         "writtenPath": "已将数据目录写入配置：{path}"
+      }
+    },
+    "import": {
+      "done": "导入完成：卡堆 {decks} 个（新增卡 {cards} 张），素材 {objects} 个，复制文件 {files} 个",
+      "deck": "  卡堆 {name}：新增 {added} 张卡，图集 {sheets} 张（{state}）  {dir}",
+      "object": "  素材 {type} {name}：asset_id {assetId}（{state}）",
+      "stateCreated": "新建",
+      "stateUpdated": "更新",
+      "dryRunNote": "（dry-run：未写入任何文件，以上为规划结果）",
+      "warning": "  提示：{message}"
+    },
+    "host": {
+      "list": {
+        "header": "可用图床 {count} 个：",
+        "defaultMark": "（默认）",
+        "caps": "    可删除：{deletable}  单文件上限：{maxSize}  格式：{formats}",
+        "unlimited": "不限",
+        "bytes": "字节"
+      },
+      "source": {
+        "builtin": "内置",
+        "config": "配置声明",
+        "plugin": "插件"
+      },
+      "check": {
+        "empty": "在 {root} 没有盘点任何素材 URL（骨架与 assets.yaml 里都没有素材引用）",
+        "header": "开始检测：{count} 个 URL（骨架 {skeleton} 条 / 台账 {ledger} 条），图床 {host}",
+        "dead": "  死链：{url}（{detail}）",
+        "more": "  …另有 {count} 条死链未显示",
+        "summary": "检测完成：共 {total} 个，存活 {alive}，死链 {dead}"
+      }
+    },
+    "fetch": {
+      "fromFile": "从清单读取 URL：{path}（{count} 条）",
+      "header": "体检完成：共 {total} 个 URL（正常 {ok} / 可迁移 {migratable} / 死链 {dead} / 需人工 {manual}）",
+      "groupHeader": "{category}（{count} 条）：",
+      "entry": "  {url}  [{kind}]  修复：{actions}",
+      "fixed": "    建议改为：{url}",
+      "detail": "    说明：{detail}",
+      "more": "  …另有 {count} 条未显示",
+      "empty": "没有从 {source} 读到任何 URL",
+      "deadNote": "存在死链：请按上面的修复动作处理（重新上传 / 迁移域名 / 转直链后更新引用）"
+    },
+    "migrate": {
+      "header": "开始迁移：图床 {host}，{urls} 个 URL，{files} 个存档文件",
+      "migrated": "  已迁移：{url} → {newUrl}",
+      "skipped": "  跳过（不可下载）：{url}（{reason}）",
+      "failed": "  失败：{url}（{reason}）",
+      "pending": "  待人工上传：{url}（{hint}）",
+      "more": "  …另有 {count} 条未显示",
+      "summary": "迁移完成：成功 {migrated} / 跳过 {skipped} / 失败 {failed} / 待人工 {pending}；共改写 {rewritten} 处 URL，涉及 {files} 个文件",
+      "empty": "在 {root} 没有盘点任何素材 URL（缺少骨架与 data.json）",
+      "noUrl": "图床未返回 {file} 的 URL"
+    },
+    "review": {
+      "prepare": {
+        "done": "审批配置已写入：{config}\n  素材集 {setId}：源A {aRoot} → 源B {bRoot}\n  审批数据目录：{dataDir}",
+        "needB": "请用 --b 指定源B（新版渲染）目录：它是使用方的语义决定，本工具不猜",
+        "noDeck": "在 {root} 下没有找到任何 deck 目录，请先用 tts import / tts deck 建卡堆",
+        "multipleDecks": "decks/ 下有多个卡堆（{names}），请用 --deck 指定要审批的那个",
+        "invalidPort": "端口无效：{value}（需为 1..65535 的整数）"
+      },
+      "status": {
+        "needApprovalRoot": "请用 --approval-root 指定审批工具仓库根（含 agent.py），或改用 --server 走 HTTP"
+      },
+      "gate": {
+        "summary": "门禁评估：素材集 {setId}，共 {total} 条（pass {pass} / reject {reject} / flag {flag} / 未审 {unreviewed} / 过期 {stale}）",
+        "allowed": "门禁通过：全部素材已审批通过，可以打包 / 上传",
+        "blocked": "门禁未通过：请先处理上面的拦截项（重新审批后重跑本命令）",
+        "blockersHeader": "拦截项 {count} 条：",
+        "blocker": "  {item}：{reason}",
+        "needSet": "配置里有 {count} 个素材集，请用 --set 指定要评估的那个",
+        "setNotFound": "配置里没有素材集 {setId}",
+        "reason": {
+          "unreviewed": "未审批",
+          "reject": "已拒绝",
+          "flag": "存疑（flag）",
+          "stale": "结果过期（源文件已变）",
+          "fileMissing": "成品文件缺失"
+        }
       }
     }
   },
@@ -497,6 +738,25 @@
       "sliceDeckNotFound": "找不到指定的牌堆：{target}",
       "sliceGridMismatch": "图集尺寸与网格声明不匹配：{imageWidth}x{imageHeight}，声明 {columns}x{rows}",
       "sliceImageInvalid": "图集图片无效：{path}（{detail}）",
+      "importManifestReadFailed": "读取导入清单失败：{path}（{detail}）",
+      "importManifestInvalidYaml": "导入清单不是合法 YAML：{path}（{detail}）",
+      "importManifestInvalid": "导入清单校验失败：{path}（{issues}）",
+      "importEmpty": "导入清单没有任何可导入的条目（decks 与 objects 均为空）",
+      "importFileMissing": "导入源文件不存在或不可读：{path}",
+      "importImageUnreadable": "导入图像无法读取或尺寸无效：{path}",
+      "importCmyk": "导入图像是 CMYK 色彩空间，TTS 不支持：{path}",
+      "importGridOverflow": "需要 {cells} 个格子，超过单张图集的上限 {maxSlots} 格",
+      "importBackFileRequired": "卡堆 {deck} 的 back 为 common 时必须提供 back_file",
+      "importBackFileForbidden": "卡堆 {deck} 的 back 为 {back} 时不能提供 back_file",
+      "importDuplicateDeck": "导入清单中卡堆名重复：{name}",
+      "importDuplicateObject": "导入清单中素材条目重复：{type} {name}",
+      "importObjectFieldRequired": "素材 {type}「{name}」缺少必填文件字段：{field}",
+      "importObjectNoFiles": "素材 {type}「{name}」没有提供任何文件字段",
+      "importCardsDirEmpty": "卡堆 {deck} 的卡片目录为空或没有图片文件：{path}",
+      "importNameCollision": "卡堆 {deck} 的正面图片与背面文件重名：{file}",
+      "importObjectFileCollision": "素材「{name}」的多个文件字段解析出同一文件名：{file}",
+      "importDestOutsideRoot": "导入落盘目标越出工作区根目录：{path}",
+      "importWriteFailed": "导入复制素材文件失败：{path}（{detail}）",
       "build": {
         "skeletonMissing": "缺少骨架存档，请先运行 tts pack unpack：{path}",
         "skeletonInvalid": "骨架存档不是合法 JSON：{path}（{detail}）",
@@ -523,6 +783,14 @@
       },
       "push": {
         "failed": "推送失败：{detail}"
+      },
+      "upstream": {
+        "dirtyWorktree": "工作区存在未提交的改动，无法同步上游：{path}（{detail}）",
+        "lfsInconsistent": "git lfs 三方状态不一致（系统 git-lfs / .gitattributes / pack.yaml）：{detail}",
+        "mergeFailed": "合并 upstream 分支失败：{detail}",
+        "notImported": "upstream 分支尚不存在，请先运行 tts pack import --as-upstream 导入上游快照（当前分支 {branch}）",
+        "snapshotNotFound": "未找到上游工坊快照：{detail}",
+        "stateInvalid": "仓库状态不允许同步上游：{detail}"
       }
     },
     "ATLAS_TOO_MANY_CELLS": "图集网格所需格数超出上限：{msg}",
@@ -679,6 +947,31 @@
     "HOST_PLUGIN_INVALID": "图床插件无效：{msg}",
     "HOST_INVALID_INPUT": "图床上传入参无效：{msg}",
     "HOST_UPLOAD_FAILED": "图床上传失败：{msg}",
+    "IMPORT_INVALID": "导入清单无效：{msg}",
+    "IMPORT_FILE_MISSING": "导入源文件缺失：{msg}",
+    "IMPORT_CMYK": "导入图像是 CMYK：{msg}",
+    "IMPORT_GRID_OVERFLOW": "导入图集网格超容量：{msg}",
+    "IMPORT_EMPTY": "导入清单为空：{msg}",
+    "IMPORT_READ_FAILED": "导入清单读取失败：{msg}",
+    "IMPORT_WRITE_FAILED": "导入落盘失败：{msg}",
+    "TTSMOD_EXPORT_FAILED": ".ttsmod 导出失败：{msg}",
+    "TTSMOD_STRICT_MISSING": ".ttsmod 素材不全（strict 模式）：{msg}",
+    "UPSTREAM_SNAPSHOT_NOT_FOUND": "未找到上游工坊快照：{msg}",
+    "UPSTREAM_DIRTY_WORKTREE": "工作区有未提交改动，无法同步上游：{msg}",
+    "UPSTREAM_STATE_INVALID": "仓库状态不允许同步上游：{msg}",
+    "UPSTREAM_NOT_IMPORTED": "尚未导入上游快照：{msg}",
+    "UPSTREAM_LFS_INCONSISTENT": "git lfs 三方状态不一致：{msg}",
+    "UPSTREAM_MERGE_FAILED": "合并 upstream 分支失败：{msg}",
+    "REVIEW_CONFIG_NOT_FOUND": "未找到审批配置：{msg}",
+    "REVIEW_CONFIG_READ_FAILED": "审批配置读取失败：{msg}",
+    "REVIEW_CONFIG_INVALID": "审批配置无效：{msg}",
+    "REVIEW_CONFIG_WRITE_FAILED": "审批配置写入失败：{msg}",
+    "REVIEW_APP_MISSING": "未找到审批工具的 python 解释器：{msg}",
+    "REVIEW_CALL_FAILED": "审批工具调用失败：{msg}",
+    "REVIEW_GATE_INPUT_INVALID": "审批门禁入参无效：{msg}",
+    "REVIEW_RESULT_NOT_FOUND": "未找到审批结果文件：{msg}",
+    "REVIEW_RESULT_READ_FAILED": "审批结果文件读取失败：{msg}",
+    "REVIEW_RESULT_INVALID": "审批结果文件无效：{msg}",
     "archive": {
       "inputMissing": "未找到 .ttsmod 文件：{path}",
       "notZip": "不是有效的 ZIP 文件（.ttsmod 应为 ZIP）：{path}",
@@ -813,5 +1106,14 @@
     "yes": "是",
     "no": "否",
     "confirm": "确认"
+  },
+  "import": {
+    "warning": {
+      "packYamlMissing": "工作区没有 pack.yaml，跳过包名一致性检查：{root}",
+      "packNameMismatch": "导入清单声明的包名 {manifestPack} 与 pack.yaml 的 {packName} 不一致（仅提示，不写回）",
+      "unregisteredType": "素材类型 {type} 未在类型表中注册，按开放类型导入：{name}",
+      "skippedFiles": "卡堆 {deck} 跳过非图片文件或子目录（未导入）：{files}",
+      "unmappedObjectFile": "素材 {name} 的字段 {field} 未能映射到 objects.csv 列，文件仍复制但不记入台账"
+    }
   }
 }

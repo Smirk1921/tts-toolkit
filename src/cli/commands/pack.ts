@@ -12,6 +12,15 @@
  * - `tts pack list`          列出 .registry.yaml 里注册的全部图包（readRegistry）
  * - `tts pack status <dir>`  单个注册图包的详细信息（findPack）
  * - `tts pack open <dir>`    用系统文件管理器打开图包目录（findPack + explorer）
+ * - `tts pack export <图包> -o <文件.ttsmod>`  工作区 → 自包含 .ttsmod（exportTtsmod）
+ * - `tts pack import <文件.ttsmod> [--into <Mods父目录>]`  解压 .ttsmod 到 Mods
+ *   父目录（importTtsmod；与既有 `pack unpack` 的区别：unpack 建工作区，import
+ *   直接往游戏数据目录铺文件，已存在文件不覆盖）
+ * - `tts pack import <工坊ID> --as-upstream`  把上游快照落到 upstream 分支
+ *   （importAsUpstream；**同一 import 子命令按参数形态分流**：位置参数是
+ *   .ttsmod 文件 → archive，是工坊 ID 且带 --as-upstream → upstream）
+ * - `tts pack sync-upstream [--pack <路径>]`  拉上游新快照并合并回当前分支
+ *   （syncUpstream；冲突只报告不选边）
  *
  * 边界（重要，不要越界）：
  * - 本文件**不直接 import src/session/ 或 src/protocol/**：需要 TTS 会话的子命令由
@@ -41,29 +50,50 @@
  *   {outPath} {scripts} {ui} {objects}、`cli.pack.build.dryRunNote`、
  *   `cli.pack.list.empty`、`cli.pack.list.header` {count}、
  *   `cli.pack.status.notFound` {dir}、`cli.pack.open.notFound` {dir}、
- *   `cli.pack.open.done` {path}、`error.unknown` {msg}；
+ *   `cli.pack.open.done` {path}、`cli.pack.export.*`（done / readme / skipped /
+ *   warning / invalidReadme / noDatadirNote）、`cli.pack.importFile.*`（done /
+ *   skippedExisting / skippedExistingItem / skippedUnsafe / workshopSaves /
+ *   workshopSaveItem / unpackHint / warning / needTarget / numericTarget）、
+ *   `cli.pack.upstream.*`（imported / importedNoChange / synced / syncedNoChange /
+ *   merged / mergeSkipped / conflictsHeader / conflictHint / needWorkshopId）、
+ *   `error.unknown` {msg}、`error.archive.*` 等；
  * - 动态（键 = `error.` + PackError.code，占位符 {msg}）：PACK_NOT_FOUND /
  *   PACK_INVALID / PACK_READ_FAILED / PACK_EXISTS / GIT_INIT_FAILED /
- *   GIT_LFS_INSTALL_FAILED / TTSMOD_INVALID / SAVE_INVALID / UNPACK_FAILED /
- *   PULL_FAILED / PUSH_FAILED / DIFF_FAILED / SKELETON_MISSING / SKELETON_INVALID /
+ *   GIT_LFS_INSTALL_FAILED / TTSMOD_INVALID / TTSMOD_EXPORT_FAILED /
+ *   TTSMOD_STRICT_MISSING / SAVE_INVALID / UNPACK_FAILED / PULL_FAILED /
+ *   PUSH_FAILED / DIFF_FAILED / SKELETON_MISSING / SKELETON_INVALID /
  *   PACK_WRITE_FAILED / BUILD_FAILED / REGISTRY_INVALID / REGISTRY_READ_FAILED /
- *   REGISTRY_CONFLICT 等（各模块错误码的完整取值见其模块头注释）。
+ *   REGISTRY_CONFLICT / UPSTREAM_* 等（各模块错误码的完整取值见其模块头注释）。
  */
 
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { Command } from "commander";
 import { execa } from "execa";
 
+import {
+  ARCHIVE_ENTRY_DIRS,
+  exportTtsmod,
+  importTtsmod,
+  ttsmodFileName,
+  type TtsmodAssetInput,
+} from "../../archive/ttsmod.js";
+import type { AssetKind } from "../../archive/detect.js";
+import { locateDatadir } from "../../datadir/locate.js";
+import { walkSaveUrls } from "../../deck/patch.js";
 import { t } from "../../i18n/index.js";
 import { buildSave } from "../../pack/build.js";
 import { diffWorkspace } from "../../pack/diff.js";
 import { initPack } from "../../pack/init.js";
-import { PackError } from "../../pack/packyaml.js";
+import { PackError, readPackYaml } from "../../pack/packyaml.js";
 import { pullFromGame } from "../../pack/pull.js";
 import { collectPushItems, type PushItem } from "../../pack/push.js";
 import { findPack, readRegistry, type PackEntry } from "../../pack/registry.js";
 import { unpackSave } from "../../pack/unpack.js";
+import { importAsUpstream, syncUpstream } from "../../pack/upstream.js";
+import { formatConflict } from "../../vcs/conflicts.js";
 import { statusPorcelain } from "../../vcs/git.js";
 
 // ---------------------------------------------------------------------------
@@ -106,6 +136,52 @@ interface PackBuildOptions extends PackRootOptions {
 interface PackListOptions extends PackRootOptions {
   /** 只显示有未提交改动的图包（无法判定 git 状态的条目视为不脏，不显示） */
   dirty: boolean;
+}
+
+/** `tts pack export` 的选项（--datadir 由全局选项经 optsWithGlobals 取，不在此声明） */
+interface PackExportOptions {
+  /** 输出 .ttsmod 路径（缺省 `<图包名> (<工坊ID>).ttsmod`，写当前目录） */
+  out?: string;
+  /** strict 模式：缺任一素材即报错，不产出不完整的包 */
+  strict?: boolean;
+  /** 随包说明语言："zh" / "en" / "both"（默认）/ "none" */
+  readme?: string;
+}
+
+/**
+ * `tts pack import` 的选项（两种形态共用一份）：
+ * - `<文件.ttsmod>` → importTtsmod（--into / --saves）；
+ * - `<工坊ID> --as-upstream` → importAsUpstream（--pack / --snapshot / --packs-root）。
+ */
+interface PackImportOptions {
+  /** 走上游分支导入形态（位置参数解释为工坊 ID） */
+  asUpstream?: boolean;
+  /** .ttsmod 形态：Mods 目录的**父目录**（解压目标，默认 "."） */
+  into: string;
+  /** .ttsmod 形态：ModSaveLocation（非 Mods/ 条目——如 Saves/——的解压目标；缺省 <into>/Saves） */
+  saves?: string;
+  /** upstream 形态：图包工作区根目录（默认 "."） */
+  pack: string;
+  /** upstream 形态：显式快照文件（存档 JSON / .ttsmod；优于按工坊 ID 探测） */
+  snapshot?: string;
+  /** upstream 形态：.registry.yaml 所在的 packs_root（缺省图包根的父目录） */
+  packsRoot?: string;
+}
+
+/** `tts pack sync-upstream` 的选项 */
+interface PackSyncUpstreamOptions {
+  /** 图包工作区根目录（默认 "."） */
+  pack: string;
+  /** 显式快照文件（存档 JSON / .ttsmod；优于按工坊 ID 探测） */
+  snapshot?: string;
+  /** .registry.yaml 所在的 packs_root（缺省图包根的父目录） */
+  packsRoot?: string;
+}
+
+/** 全局选项中上游子命令需要的一项（--datadir 在 program 级声明） */
+interface GlobalDatadirOption {
+  /** 显式 TTS Mods 目录（未给时按 src/datadir/locate.ts 探测） */
+  datadir?: string;
 }
 
 /** pack list 的一行：注册表条目 + 实测的 git 脏标志（null = 无法判定，如不是 git 仓库） */
@@ -234,6 +310,129 @@ function formatPackEntry(entry: PackEntry): string[] {
     lines.push(`upstream.local_commit: ${entry.upstream.local_commit}`);
   }
   return lines;
+}
+
+// ---------------------------------------------------------------------------
+// 内部工具：pack export / import / sync-upstream
+// ---------------------------------------------------------------------------
+
+/** 字节数换算单位（从大到小依次试探；不足 1 KB 时直接输出字节） */
+const BYTE_UNITS: ReadonlyArray<{ limit: number; suffix: string }> = [
+  { limit: 1024 ** 4, suffix: "TB" },
+  { limit: 1024 ** 3, suffix: "GB" },
+  { limit: 1024 ** 2, suffix: "MB" },
+  { limit: 1024, suffix: "KB" },
+];
+
+/**
+ * 把字节数格式化成人可读文本（与 src/cli/commands/vcs.ts 的同名函数一致；
+ * 命令层模块之间按仓库约定不互相 import，此处为副本）。
+ * @param bytes 字节数（非负整数）
+ * @returns 如 "512 B" / "1.50 MB"
+ */
+function formatBytes(bytes: number): string {
+  for (const unit of BYTE_UNITS) {
+    if (bytes >= unit.limit) {
+      return `${(bytes / unit.limit).toFixed(2)} ${unit.suffix}`;
+    }
+  }
+  return `${bytes} B`;
+}
+
+/**
+ * 素材字段路径 → .ttsmod 素材类型。
+ *
+ * 映射依据 TTS 的 UrlFileType 语义（src/deck/patch.ts 的访问清单）：
+ * - CustomMesh.MeshURL → model（TTS 的模型固定 .obj）；
+ * - CustomAssetbundle.* → assetbundle；CustomPDF.PDFUrl → pdf；
+ * - 其余（CustomDeck 正反面 / CustomImage / CustomDecal / Mesh 的贴图字段 /
+ *   SkyURL / TableURL）都是位图 → image。
+ *
+ * @param fieldPath walkSaveUrls 给的字段路径（[容器键, 字段名] 或 [字段名]）
+ * @returns 素材类型
+ */
+function assetKindOfField(fieldPath: readonly string[]): AssetKind {
+  const container = fieldPath[0];
+  const field = fieldPath[1];
+  if (container === "CustomMesh" && field === "MeshURL") {
+    return "model";
+  }
+  if (container === "CustomAssetbundle") {
+    return "assetbundle";
+  }
+  if (container === "CustomPDF") {
+    return "pdf";
+  }
+  return "image";
+}
+
+/**
+ * 从 TTS Mods 目录推出各素材类型的本地缓存目录（扩展名推导第 2 级 + 素材字节
+ * 来源）。目录名从 {@link ARCHIVE_ENTRY_DIRS} 派生（契约里的 `Mods/<目录>`），
+ * 不硬编码字符串。
+ *
+ * @param modsDir Mods 目录（datadir）
+ * @returns kind → 缓存目录绝对路径
+ */
+function cacheDirsFromDatadir(modsDir: string): Partial<Record<AssetKind, string>> {
+  const dirs: Partial<Record<AssetKind, string>> = {};
+  for (const [kind, entry] of Object.entries(ARCHIVE_ENTRY_DIRS)) {
+    dirs[kind as AssetKind] = path.join(modsDir, entry.replace(/^Mods[/\\]/, ""));
+  }
+  return dirs;
+}
+
+/**
+ * 解析导出用的 Mods 目录：优先全局 --datadir，其次 locateDatadir 的推荐值；
+ * 都拿不到时返回 undefined（扩展名推导退化为 URL 路径 + 联网探测，仍可用）。
+ * @param explicit 全局 --datadir 的值（可省略）
+ * @returns Mods 目录绝对路径；无法确定时 undefined
+ */
+async function resolveModsDir(explicit: string | undefined): Promise<string | undefined> {
+  if (explicit !== undefined && explicit.trim() !== "") {
+    return path.resolve(explicit);
+  }
+  try {
+    const located = await locateDatadir();
+    return located.recommended;
+  } catch {
+    // 探测失败（配置损坏等）不是导出阻塞项：没有缓存目录也能靠 URL / 联网推导扩展名
+    return undefined;
+  }
+}
+
+/**
+ * 从构建好的存档 JSON 里收集全部待打包素材（URL + 类型，按 kind|url 去重）。
+ * {lang} 语言变体由 walkSaveUrls 按契约跳过；file: 等不可下载形态照常收集，
+ * 由 exportTtsmod 在"缺本地文件"时跳过并告警（不静默）。
+ *
+ * @param saveJson 存档 JSON（字符串）
+ * @returns 去重后的素材清单（顺序 = 遍历顺序）
+ */
+function collectExportAssets(saveJson: string): TtsmodAssetInput[] {
+  const parsed: unknown = JSON.parse(saveJson);
+  const seen = new Set<string>();
+  const assets: TtsmodAssetInput[] = [];
+  walkSaveUrls(parsed, (loc) => {
+    const kind = assetKindOfField(loc.fieldPath);
+    const key = `${kind}|${loc.currentValue}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    assets.push({ url: loc.currentValue, kind });
+  });
+  return assets;
+}
+
+/** 校验 `--readme` 的取值（不合法时打印用法错误并以退出码 1 结束） */
+function parseReadme(value: string | undefined): "zh" | "en" | "both" | "none" {
+  const raw = value ?? "both";
+  if (raw === "zh" || raw === "en" || raw === "both" || raw === "none") {
+    return raw;
+  }
+  console.error(t("cli.pack.export.invalidReadme", { value: raw }));
+  process.exit(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -507,10 +706,254 @@ const openSub = new Command("open")
   });
 
 // ---------------------------------------------------------------------------
+// 子命令：打包分发（export / import，阶段 3B）
+// ---------------------------------------------------------------------------
+
+/**
+ * `tts pack export <图包> -o <名>.ttsmod`：把工作区打成自包含 `.ttsmod`。
+ *
+ * 流程：buildSave 合成存档 JSON（写到临时文件，导出后删除；不污染 dist/）→
+ * walkSaveUrls 收集素材（URL + 类型）→ exportTtsmod 打包（扩展名三级兜底、
+ * manifest / README、缺素材列出或 --strict 中止）。
+ *
+ * 素材本地缓存目录来自 `--datadir`（全局选项）或 locateDatadir 的探测结果；
+ * 拿不到时仍可导出（扩展名走 URL 路径 / 联网探测），只多一行提示。
+ * `-o` 缺省用 ttsmodFileName 的约定名 `<图包名> (<工坊ID>).ttsmod`（写当前目录）。
+ */
+const exportSub = new Command("export")
+  .description(t("cli.command.pack.export.description"))
+  .argument("<pack>", t("cli.command.pack.export.argument.pack"))
+  .option("-o, --out <file>", t("cli.command.pack.export.option.out"))
+  .option("--strict", t("cli.command.pack.export.option.strict"), false)
+  .option("--readme <lang>", t("cli.command.pack.export.option.readme"), "both")
+  .action(async function (this: Command, packDir: string, opts: PackExportOptions) {
+    try {
+      const globals = this.optsWithGlobals<GlobalDatadirOption>();
+      const readme = parseReadme(opts.readme);
+      const packRoot = path.resolve(packDir);
+      const pack = await readPackYaml(packRoot);
+      const modsDir = await resolveModsDir(globals.datadir);
+      if (modsDir === undefined) {
+        console.log(t("cli.pack.export.noDatadirNote"));
+      }
+      const cacheDirs = modsDir === undefined ? undefined : cacheDirsFromDatadir(modsDir);
+
+      // —— 建存档 JSON 到临时文件（export 的产物只有 .ttsmod）——
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "tts-toolkit-export-"));
+      let saveJson: string;
+      try {
+        const tempSave = path.join(tempDir, "save.json");
+        await buildSave({ root: packRoot, outPath: tempSave });
+        saveJson = await readFile(tempSave, "utf8");
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+
+      const assets = collectExportAssets(saveJson);
+      const outPath =
+        opts.out !== undefined && opts.out !== ""
+          ? opts.out
+          : ttsmodFileName(pack.name, pack.workshop_id);
+      const result = await exportTtsmod({
+        outPath,
+        packName: pack.name,
+        workshopId: pack.workshop_id,
+        sourceModId: pack.source_mod,
+        saveJson,
+        assets,
+        ...(cacheDirs === undefined ? {} : { cacheDirs }),
+        ...(opts.strict === true ? { strict: true } : {}),
+        readme,
+      });
+
+      console.log(
+        t("cli.pack.export.done", {
+          outPath: result.outPath,
+          entries: result.entryCount,
+          size: formatBytes(result.fileBytes),
+          included: result.included.length,
+          skipped: result.skipped.length,
+        }),
+      );
+      if (result.readmeEntries.length > 0) {
+        console.log(t("cli.pack.export.readme", { entries: result.readmeEntries.join("、") }));
+      }
+      if (result.skipped.length > 0) {
+        console.log(t("cli.pack.export.skippedHeader", { count: result.skipped.length }));
+      }
+      for (const warning of result.warnings) {
+        console.log(t("cli.pack.export.warning", { message: warning }));
+      }
+    } catch (err) {
+      process.exit(reportPackError(err));
+    }
+  });
+
+/**
+ * `tts pack import`：两种形态分流（见模块头注释）。
+ *
+ * - `<文件.ttsmod>`：importTtsmod 解压到 `--into`（Mods 的**父目录**）；非
+ *   `Mods/` 条目（如 `Saves/`）解到 `--saves`（缺省 `<into>/Saves`）。已存在
+ *   文件不覆盖（原工具语义），跳过的逐个列出。
+ * - `<工坊ID> --as-upstream`：importAsUpstream 把上游快照落到 `upstream` 分支
+ *   （`--pack` 工作区、`--snapshot` 显式快照、`--datadir` 全局选项探测
+ *   `Mods/Workshop/<id>.json`）。
+ */
+const importSub = new Command("import")
+  .description(t("cli.command.pack.import.description"))
+  .argument("[target]", t("cli.command.pack.import.argument.target"))
+  .option("--as-upstream", t("cli.command.pack.import.option.asUpstream"), false)
+  .option("--into <dir>", t("cli.command.pack.import.option.into"), ".")
+  .option("--saves <dir>", t("cli.command.pack.import.option.saves"))
+  .option("--pack <dir>", t("cli.command.pack.import.option.pack"), ".")
+  .option("--snapshot <file>", t("cli.command.pack.import.option.snapshot"))
+  .option("--packs-root <dir>", t("cli.command.pack.import.option.packsRoot"))
+  .action(async function (this: Command, target: string | undefined, opts: PackImportOptions) {
+    try {
+      if (opts.asUpstream === true) {
+        if (target === undefined || !/^[0-9]+$/.test(target)) {
+          console.error(t("cli.pack.upstream.needWorkshopId"));
+          process.exit(1);
+        }
+        const workshopId = Number(target);
+        if (!Number.isSafeInteger(workshopId) || workshopId <= 0) {
+          console.error(t("cli.pack.upstream.needWorkshopId"));
+          process.exit(1);
+        }
+        const globals = this.optsWithGlobals<GlobalDatadirOption>();
+        const result = await importAsUpstream({
+          root: opts.pack,
+          workshopId,
+          ...(opts.snapshot === undefined ? {} : { snapshotPath: opts.snapshot }),
+          ...(globals.datadir === undefined ? {} : { datadir: globals.datadir }),
+          ...(opts.packsRoot === undefined ? {} : { packsRoot: opts.packsRoot }),
+        });
+        console.log(
+          t("cli.pack.upstream.imported", {
+            snapshot: result.snapshotPath,
+            branch: result.branch,
+            commit: result.upstreamCommit.slice(0, 7),
+          }),
+        );
+        if (!result.committed) {
+          console.log(t("cli.pack.upstream.importedNoChange"));
+        }
+        return;
+      }
+
+      if (target === undefined || target.trim() === "") {
+        console.error(t("cli.pack.importFile.needTarget"));
+        process.exit(1);
+      }
+      if (/^[0-9]+$/.test(target.trim())) {
+        // 纯数字只可能是工坊 ID：提示补 --as-upstream（或给 .ttsmod 文件路径）
+        console.error(t("cli.pack.importFile.numericTarget", { target }));
+        process.exit(1);
+      }
+
+      const into = path.resolve(opts.into);
+      const savesDir =
+        opts.saves !== undefined && opts.saves !== ""
+          ? path.resolve(opts.saves)
+          : path.join(into, "Saves");
+      const result = await importTtsmod(target, {
+        modsParentDir: into,
+        modSaveLocation: savesDir,
+      });
+      console.log(
+        t("cli.pack.importFile.done", {
+          file: target,
+          into,
+          extracted: result.extracted,
+          total: result.totalEntries,
+        }),
+      );
+      if (result.skippedExisting.length > 0) {
+        console.log(t("cli.pack.importFile.skippedExisting", { count: result.skippedExisting.length }));
+        for (const name of result.skippedExisting) {
+          console.log(t("cli.pack.importFile.skippedExistingItem", { path: name }));
+        }
+      }
+      if (result.skippedUnsafe.length > 0) {
+        console.log(t("cli.pack.importFile.skippedUnsafe", { count: result.skippedUnsafe.length }));
+      }
+      if (result.workshopSaves.length > 0) {
+        console.log(t("cli.pack.importFile.workshopSaves", { count: result.workshopSaves.length }));
+        for (const save of result.workshopSaves) {
+          console.log(t("cli.pack.importFile.workshopSaveItem", { path: save }));
+        }
+        console.log(t("cli.pack.importFile.unpackHint", { path: result.workshopSaves[0] as string }));
+      }
+      for (const warning of result.warnings) {
+        console.log(t("cli.pack.importFile.warning", { message: warning }));
+      }
+    } catch (err) {
+      process.exit(reportPackError(err));
+    }
+  });
+
+/**
+ * `tts pack sync-upstream [--pack <路径>]`：拉上游新快照 → commit 到 upstream
+ * 分支 → 合并回当前分支（syncUpstream）。
+ *
+ * 合并冲突时**只报告不选边**：逐条打印 formatConflict 的语义化报告（哪个牌堆
+ * 的哪张卡 / 哪个对象），merge 保持进行中的现场，退出码 1 待用户解决后自行
+ * `git add` / `git commit`；干净合并（含 already up to date）正常 0。
+ */
+const syncUpstreamSub = new Command("sync-upstream")
+  .description(t("cli.command.pack.syncUpstream.description"))
+  .option("--pack <dir>", t("cli.command.pack.syncUpstream.option.pack"), ".")
+  .option("--snapshot <file>", t("cli.command.pack.syncUpstream.option.snapshot"))
+  .option("--packs-root <dir>", t("cli.command.pack.syncUpstream.option.packsRoot"))
+  .action(async function (this: Command, opts: PackSyncUpstreamOptions) {
+    try {
+      const globals = this.optsWithGlobals<GlobalDatadirOption>();
+      const result = await syncUpstream({
+        root: opts.pack,
+        ...(opts.snapshot === undefined ? {} : { snapshotPath: opts.snapshot }),
+        ...(globals.datadir === undefined ? {} : { datadir: globals.datadir }),
+        ...(opts.packsRoot === undefined ? {} : { packsRoot: opts.packsRoot }),
+      });
+      console.log(
+        t("cli.pack.upstream.synced", {
+          snapshot: result.snapshotPath,
+          branch: result.branch,
+          commit: result.upstreamCommit.slice(0, 7),
+        }),
+      );
+      if (!result.committed) {
+        console.log(t("cli.pack.upstream.syncedNoChange"));
+      }
+      if (!result.mergeAttempted) {
+        console.log(t("cli.pack.upstream.mergeSkipped"));
+        return;
+      }
+      if (result.merged) {
+        console.log(t("cli.pack.upstream.merged", { branch: result.branch }));
+        return;
+      }
+      const conflicts = result.conflicts;
+      if (conflicts !== null && conflicts.hasConflicts) {
+        console.log(t("cli.pack.upstream.conflictsHeader", { count: conflicts.conflicts.length }));
+        for (const info of conflicts.conflicts) {
+          console.log(formatConflict(info));
+        }
+        if (conflicts.cardsCsvConflictPaths.length > 0) {
+          console.log(t("cli.pack.upstream.cardsCsvWarning"));
+        }
+        console.log(t("cli.pack.upstream.conflictHint"));
+        process.exitCode = 1;
+      }
+    } catch (err) {
+      process.exit(reportPackError(err));
+    }
+  });
+
+// ---------------------------------------------------------------------------
 // 主命令
 // ---------------------------------------------------------------------------
 
-/** `tts pack` 主命令：9 个子命令在上方定义后统一挂载（薄分发层，无自身 action） */
+/** `tts pack` 主命令：12 个子命令在上方定义后统一挂载（薄分发层，无自身 action） */
 export const packCommand: Command = new Command("pack").description(t("cli.command.pack.description"));
 
 packCommand.addCommand(initSub);
@@ -522,3 +965,6 @@ packCommand.addCommand(buildSub);
 packCommand.addCommand(listSub);
 packCommand.addCommand(packStatusSub);
 packCommand.addCommand(openSub);
+packCommand.addCommand(exportSub);
+packCommand.addCommand(importSub);
+packCommand.addCommand(syncUpstreamSub);

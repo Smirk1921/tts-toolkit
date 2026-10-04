@@ -106,6 +106,39 @@
           "option": {
             "root": "Pack index root directory (default: current directory)"
           }
+        },
+        "export": {
+          "description": "Package a pack workspace into a self-contained .ttsmod (save JSON + assets + manifest + README)",
+          "argument": {
+            "pack": "Pack workspace root"
+          },
+          "option": {
+            "out": "Output .ttsmod path (default <pack name> (<workshop ID>).ttsmod in the current directory)",
+            "strict": "Strict mode: fail when any asset is missing instead of producing an incomplete package",
+            "readme": "Bundled README language: zh | en | both (default) | none"
+          }
+        },
+        "import": {
+          "description": "Import a .ttsmod into the Mods parent directory (<file.ttsmod>), or move an upstream workshop snapshot onto the upstream branch (<workshop ID> --as-upstream)",
+          "argument": {
+            "target": "Path to a .ttsmod file, or a workshop ID when used with --as-upstream"
+          },
+          "option": {
+            "asUpstream": "Import as upstream: the positional argument is a workshop ID and the snapshot lands on the upstream branch (read-only snapshot, no merge)",
+            "into": ".ttsmod form: parent directory of Mods (extraction target; defaults to the current directory)",
+            "saves": ".ttsmod form: extraction target for non-Mods entries such as Saves/ (defaults to <into>/Saves)",
+            "pack": "Upstream form: pack workspace root",
+            "snapshot": "Upstream form: explicit snapshot file (save JSON / .ttsmod), preferred over workshop-ID lookup",
+            "packsRoot": "Upstream form: packs_root containing .registry.yaml (defaults to the pack root's parent)"
+          }
+        },
+        "syncUpstream": {
+          "description": "Fetch a new upstream snapshot and merge it back into the current branch (conflicts are reported, never resolved automatically; exit 1)",
+          "option": {
+            "pack": "Pack workspace root",
+            "snapshot": "Explicit snapshot file (save JSON / .ttsmod), preferred over workshop-ID lookup",
+            "packsRoot": "packs_root containing .registry.yaml (defaults to the pack root's parent)"
+          }
         }
       },
       "deck": {
@@ -237,6 +270,89 @@
         "option": {
           "check": "Check URL reachability over the network (HTTP 2xx)",
           "sample": "Only check a random sample of N URLs"
+        },
+        "upload": {
+          "description": "Upload changed workspace assets to the image host and update the assets.yaml ledger and objects.csv source column",
+          "option": {
+            "pack": "Pack workspace root",
+            "host": "Host id override (defaults to pack.yaml's host field)"
+          }
+        }
+      },
+      "import": {
+        "description": "Import assets into a pack workspace from an import.yaml manifest",
+        "argument": {
+          "manifest": "Path to the import.yaml manifest"
+        },
+        "option": {
+          "pack": "Pack workspace root (relative paths inside the manifest resolve against the manifest's own directory)",
+          "dryRun": "Preview the plan only; copy no files and write no cards.csv / objects.csv"
+        }
+      },
+      "host": {
+        "description": "Image hosts and asset liveness checks",
+        "list": {
+          "description": "List available image hosts (built-in + config-declared + plugins)"
+        },
+        "check": {
+          "description": "Inventory the pack's asset URLs and check liveness with the selected host; dead links exit 1",
+          "option": {
+            "pack": "Pack workspace root (URLs come from .tts/skeleton.json + assets.yaml)",
+            "host": "Host id used for the check (default steamcloud, the built-in HTTP probe)"
+          }
+        }
+      },
+      "fetch": {
+        "description": "Check asset URL health (ok / migratable / dead / manual) and report fix actions",
+        "argument": {
+          "source": "A URL, a save/skeleton JSON, or a plain-text list with one URL per line"
+        },
+        "option": {
+          "pack": "Also include URLs inventoried from this pack workspace (.tts/skeleton.json + assets.yaml)"
+        }
+      },
+      "migrate": {
+        "description": "Migrate workspace assets to a target image host: download, upload, and rewrite URLs in the skeleton / data.json / ledgers",
+        "option": {
+          "to": "Target host id (built-in steamcloud/s3/local/command, or a config-declared host name)",
+          "pack": "Pack workspace root"
+        }
+      },
+      "review": {
+        "description": "Integration with the pack approval tool: generate config / query status / release gate",
+        "prepare": {
+          "description": "Generate approval.config.json (source A = deck dir, source B = the new render dir given by --b)",
+          "option": {
+            "pack": "Pack workspace root",
+            "deck": "Directory name under decks/ (defaults to the only deck when there is exactly one)",
+            "set": "Set id (defaults to the deck directory name)",
+            "name": "Set display name (defaults to deck.yaml's name)",
+            "a": "Source A (old images) root (defaults to the deck directory)",
+            "b": "Source B (new render) root (required)",
+            "labelA": "Source A label",
+            "labelB": "Source B label",
+            "tags": "Issue tags (comma-separated)",
+            "host": "Approval server bind address (default 127.0.0.1)",
+            "port": "Approval server port (default 8765)"
+          }
+        },
+        "status": {
+          "description": "Query the approval tool overview as JSON (HTTP when the server runs, else python agent.py)",
+          "option": {
+            "pack": "Pack workspace root",
+            "approvalRoot": "Approval tool repository root (contains agent.py); optional when --server is given",
+            "offline": "Force the file-based CLI (passes --offline to agent.py)",
+            "server": "Approval server base URL (e.g. http://127.0.0.1:8765)"
+          }
+        },
+        "gate": {
+          "description": "Release gate over approval results: pass only when everything is approved (exit 1 otherwise)",
+          "option": {
+            "pack": "Pack workspace root",
+            "set": "Set id (optional when the config has exactly one set)",
+            "bRoot": "Override the source B (finished) directory (defaults to that set's b.root)",
+            "dataDir": "Override the approval data directory (defaults to the config's data_dir)"
+          }
         }
       }
     },
@@ -304,6 +420,38 @@
       "open": {
         "notFound": "Pack {dir} not found in .registry.yaml",
         "done": "Opened {path}"
+      },
+      "export": {
+        "done": "Exported {outPath}: {entries} entries, {size}, {included} asset(s) included, {skipped} skipped",
+        "readme": "Bundled README: {entries}",
+        "skippedHeader": "Skipped assets: {count}",
+        "warning": "  {message}",
+        "invalidReadme": "--readme accepts only zh / en / both / none (got {value})",
+        "noDatadirNote": "Note: no TTS data directory (Mods) found; asset extensions will be derived from URL paths and online Content-Type only. Pass the global --datadir to specify one"
+      },
+      "importFile": {
+        "done": "Imported {file} → {into} ({extracted} of {total} file entries written)",
+        "skippedExisting": "Skipped {count} existing file(s) (not overwritten):",
+        "skippedExistingItem": "  {path}",
+        "skippedUnsafe": "Skipped {count} unsafe entry/entries (.. / absolute path / drive letter)",
+        "workshopSaves": "Workshop saves inside the package: {count}",
+        "workshopSaveItem": "  {path}",
+        "unpackHint": "To build a workspace, run: tts pack unpack \"{path}\"",
+        "warning": "  {message}",
+        "needTarget": "Pass a .ttsmod file path, or a workshop ID together with --as-upstream",
+        "numericTarget": "{target} is all digits: for a workshop ID add --as-upstream (tts pack import {target} --as-upstream); for a .ttsmod pass the full file path"
+      },
+      "upstream": {
+        "imported": "Imported upstream snapshot {snapshot} onto the upstream branch (current branch {branch}, commit {commit})",
+        "importedNoChange": "The snapshot matches the current upstream branch; no new commit was created",
+        "synced": "Synced upstream snapshot {snapshot} (current branch {branch}, upstream commit {commit})",
+        "syncedNoChange": "The snapshot matches the current upstream branch; no new commit was created",
+        "merged": "Merged upstream back into branch {branch} (clean merge)",
+        "mergeSkipped": "Already on the upstream branch; merge skipped",
+        "conflictsHeader": "Merge conflicts: {count} (resolve manually; this tool never picks a side)",
+        "cardsCsvWarning": "Note: cards.csv itself conflicts; resolve it before the other conflicts",
+        "conflictHint": "After resolving, run git add <file> and git commit to finish the merge (or git merge --abort to give up)",
+        "needWorkshopId": "--as-upstream requires a positive integer workshop ID as the positional argument"
       }
     },
     "deck": {
@@ -401,7 +549,20 @@
       "deadList": "Dead links (showing first {shown}):",
       "deadMore": "  …{count} more not shown",
       "deadDetail": "    Reason: {detail}",
-      "notConnected": "Cannot inventory assets: not connected to the TTS editor"
+      "notConnected": "Cannot inventory assets: not connected to the TTS editor",
+      "upload": {
+        "hostSelected": "Upload target host: {host} (pack.yaml declares: {declared})",
+        "hostNotResolvable": "Cannot resolve host {host}: pack.yaml's host must be a built-in host id, or pass --host with a config-declared / plugin host id",
+        "scan": "Scan complete: {candidates} to upload, {skipped} unchanged skipped",
+        "uploaded": "  Uploaded {file} → {url}",
+        "pending": "  Manual upload pending {file}: {hint}",
+        "failed": "  Upload failed {file}: {reason}",
+        "more": "  …and {count} more not shown",
+        "done": "Upload complete: uploaded {uploaded} / skipped {skipped} / pending {pending} / failed {failed}",
+        "ledger": "Asset ledger updated: {path}",
+        "noUrl": "The host returned no URL for {file}",
+        "costWarning": "⚠️ Before your first push:\n   Your repository has git-lfs enabled; pushing binary assets consumes remote LFS quota.\n   Typical free tiers: GitHub 1GB storage + 1GB/month bandwidth; Gitee 500MB storage; GitLab 10GB storage (unlimited when self-hosted).\n   Current repository LFS objects: {estimate}.\n   If quota is a concern: switch to plain git with tts vcs lfs disable, self-host Gitea / GitLab, or keep assets external."
+      }
     },
     "config": {
       "datadir": {
@@ -428,6 +589,86 @@
         "recommend": "Recommended data directory: {path}",
         "confirm": "Write it to the config? (y/N)",
         "writtenPath": "Data directory written to config: {path}"
+      }
+    },
+    "import": {
+      "done": "Import complete: {decks} deck(s) ({cards} new card(s)), {objects} object(s), {files} file(s) copied",
+      "deck": "  Deck {name}: {added} new card(s), {sheets} sheet(s) ({state})  {dir}",
+      "object": "  Object {type} {name}: asset_id {assetId} ({state})",
+      "stateCreated": "created",
+      "stateUpdated": "updated",
+      "dryRunNote": "(dry-run: nothing was written; the lines above are the plan)",
+      "warning": "  Note: {message}"
+    },
+    "host": {
+      "list": {
+        "header": "Available image hosts: {count}",
+        "defaultMark": " (default)",
+        "caps": "    deletable: {deletable}  max file size: {maxSize}  formats: {formats}",
+        "unlimited": "unlimited",
+        "bytes": "bytes"
+      },
+      "source": {
+        "builtin": "built-in",
+        "config": "config",
+        "plugin": "plugin"
+      },
+      "check": {
+        "empty": "No asset URLs found under {root} (neither the skeleton nor assets.yaml references any)",
+        "header": "Checking {count} URL(s) (skeleton {skeleton} / ledger {ledger}) with host {host}",
+        "dead": "  Dead: {url} ({detail})",
+        "more": "  …and {count} more dead link(s) not shown",
+        "summary": "Check complete: {total} total, {alive} alive, {dead} dead"
+      }
+    },
+    "fetch": {
+      "fromFile": "Read URLs from manifest: {path} ({count})",
+      "header": "Health check complete: {total} URL(s) (ok {ok} / migratable {migratable} / dead {dead} / manual {manual})",
+      "groupHeader": "{category} ({count}):",
+      "entry": "  {url}  [{kind}]  fix: {actions}",
+      "fixed": "    suggested: {url}",
+      "detail": "    note: {detail}",
+      "more": "  …and {count} more not shown",
+      "empty": "No URL was read from {source}",
+      "deadNote": "Dead links found: apply the fix actions above (re-upload / migrate domain / convert to direct link, then update references)"
+    },
+    "migrate": {
+      "header": "Migration started: host {host}, {urls} URL(s), {files} save file(s)",
+      "migrated": "  Migrated: {url} → {newUrl}",
+      "skipped": "  Skipped (not downloadable): {url} ({reason})",
+      "failed": "  Failed: {url} ({reason})",
+      "pending": "  Manual upload pending: {url} ({hint})",
+      "more": "  …and {count} more not shown",
+      "summary": "Migration complete: migrated {migrated} / skipped {skipped} / failed {failed} / pending {pending}; {rewritten} URL reference(s) rewritten across {files} file(s)",
+      "empty": "No asset URLs found under {root} (no skeleton or data.json)",
+      "noUrl": "Host returned no URL for {file}"
+    },
+    "review": {
+      "prepare": {
+        "done": "Approval config written: {config}\n  Set {setId}: source A {aRoot} → source B {bRoot}\n  Approval data dir: {dataDir}",
+        "needB": "Pass --b to specify the source B (new render) directory: that semantic choice belongs to the caller, this tool does not guess",
+        "noDeck": "No deck directory found under {root}; create one first with tts import / tts deck",
+        "multipleDecks": "Multiple decks under decks/ ({names}); pass --deck to choose the one to review",
+        "invalidPort": "Invalid port: {value} (must be an integer in 1..65535)"
+      },
+      "status": {
+        "needApprovalRoot": "Pass --approval-root pointing at the approval tool repository (contains agent.py), or use --server for HTTP"
+      },
+      "gate": {
+        "summary": "Gate evaluation: set {setId}, {total} item(s) (pass {pass} / reject {reject} / flag {flag} / unreviewed {unreviewed} / stale {stale})",
+        "allowed": "Gate passed: every asset is approved; packaging / uploading may proceed",
+        "blocked": "Gate blocked: resolve the blockers above (re-review, then rerun this command)",
+        "blockersHeader": "Blockers: {count}",
+        "blocker": "  {item}: {reason}",
+        "needSet": "The config has {count} sets; pass --set to choose the one to evaluate",
+        "setNotFound": "No set named {setId} in the config",
+        "reason": {
+          "unreviewed": "unreviewed",
+          "reject": "rejected",
+          "flag": "flagged",
+          "stale": "stale result (source file changed)",
+          "fileMissing": "finished file missing"
+        }
       }
     }
   },
@@ -497,6 +738,25 @@
       "sliceDeckNotFound": "Specified deck not found: {target}",
       "sliceGridMismatch": "Atlas size does not match the declared grid: {imageWidth}x{imageHeight}, declared {columns}x{rows}",
       "sliceImageInvalid": "Invalid atlas image: {path} ({detail})",
+      "importManifestReadFailed": "Failed to read the import manifest: {path} ({detail})",
+      "importManifestInvalidYaml": "Import manifest is not valid YAML: {path} ({detail})",
+      "importManifestInvalid": "Import manifest validation failed: {path} ({issues})",
+      "importEmpty": "Import manifest has nothing to import (both decks and objects are empty)",
+      "importFileMissing": "Import source file is missing or unreadable: {path}",
+      "importImageUnreadable": "Import image is unreadable or has invalid dimensions: {path}",
+      "importCmyk": "Import image uses the CMYK color space, which TTS does not support: {path}",
+      "importGridOverflow": "Needs {cells} cells, exceeding the single-atlas limit of {maxSlots}",
+      "importBackFileRequired": "Deck {deck} must provide back_file when back is common",
+      "importBackFileForbidden": "Deck {deck} must not provide back_file when back is {back}",
+      "importDuplicateDeck": "Duplicate deck name in import manifest: {name}",
+      "importDuplicateObject": "Duplicate object entry in import manifest: {type} {name}",
+      "importObjectFieldRequired": "Object {type} \"{name}\" is missing the required file field: {field}",
+      "importObjectNoFiles": "Object {type} \"{name}\" provides no file fields",
+      "importCardsDirEmpty": "Deck {deck} card directory is empty or contains no image files: {path}",
+      "importNameCollision": "Deck {deck} face image collides with the back file name: {file}",
+      "importObjectFileCollision": "Object \"{name}\" has multiple file fields resolving to the same file name: {file}",
+      "importDestOutsideRoot": "Import destination escapes the workspace root: {path}",
+      "importWriteFailed": "Failed to copy imported asset file: {path} ({detail})",
       "build": {
         "skeletonMissing": "Skeleton save missing; run tts pack unpack first: {path}",
         "skeletonInvalid": "Skeleton save is not valid JSON: {path} ({detail})",
@@ -523,6 +783,14 @@
       },
       "push": {
         "failed": "Push failed: {detail}"
+      },
+      "upstream": {
+        "dirtyWorktree": "Workspace has uncommitted changes; cannot sync upstream: {path} ({detail})",
+        "lfsInconsistent": "Git LFS three-way state is inconsistent (system git-lfs / .gitattributes / pack.yaml): {detail}",
+        "mergeFailed": "Failed to merge the upstream branch: {detail}",
+        "notImported": "The upstream branch does not exist yet; run tts pack import --as-upstream first (current branch {branch})",
+        "snapshotNotFound": "Upstream workshop snapshot not found: {detail}",
+        "stateInvalid": "Repository state does not allow syncing upstream: {detail}"
       }
     },
     "ATLAS_TOO_MANY_CELLS": "Atlas grid needs too many cells: {msg}",
@@ -679,6 +947,31 @@
     "HOST_PLUGIN_INVALID": "Invalid image host plugin: {msg}",
     "HOST_INVALID_INPUT": "Invalid image host upload input: {msg}",
     "HOST_UPLOAD_FAILED": "Image host upload failed: {msg}",
+    "IMPORT_INVALID": "Invalid import manifest: {msg}",
+    "IMPORT_FILE_MISSING": "Import source file missing: {msg}",
+    "IMPORT_CMYK": "Import image is CMYK: {msg}",
+    "IMPORT_GRID_OVERFLOW": "Import atlas grid overflow: {msg}",
+    "IMPORT_EMPTY": "Import manifest is empty: {msg}",
+    "IMPORT_READ_FAILED": "Failed to read the import manifest: {msg}",
+    "IMPORT_WRITE_FAILED": "Failed to write imported assets: {msg}",
+    "TTSMOD_EXPORT_FAILED": "Failed to export .ttsmod: {msg}",
+    "TTSMOD_STRICT_MISSING": ".ttsmod is missing assets (strict mode): {msg}",
+    "UPSTREAM_SNAPSHOT_NOT_FOUND": "Upstream workshop snapshot not found: {msg}",
+    "UPSTREAM_DIRTY_WORKTREE": "Workspace has uncommitted changes; cannot sync upstream: {msg}",
+    "UPSTREAM_STATE_INVALID": "Repository state does not allow upstream sync: {msg}",
+    "UPSTREAM_NOT_IMPORTED": "Upstream snapshot not imported yet: {msg}",
+    "UPSTREAM_LFS_INCONSISTENT": "git-lfs three-way state is inconsistent: {msg}",
+    "UPSTREAM_MERGE_FAILED": "Failed to merge the upstream branch: {msg}",
+    "REVIEW_CONFIG_NOT_FOUND": "Approval config not found: {msg}",
+    "REVIEW_CONFIG_READ_FAILED": "Failed to read the approval config: {msg}",
+    "REVIEW_CONFIG_INVALID": "Invalid approval config: {msg}",
+    "REVIEW_CONFIG_WRITE_FAILED": "Failed to write the approval config: {msg}",
+    "REVIEW_APP_MISSING": "Python interpreter for the approval tool not found: {msg}",
+    "REVIEW_CALL_FAILED": "Approval tool call failed: {msg}",
+    "REVIEW_GATE_INPUT_INVALID": "Invalid gate input: {msg}",
+    "REVIEW_RESULT_NOT_FOUND": "Approval result file not found: {msg}",
+    "REVIEW_RESULT_READ_FAILED": "Failed to read the approval result file: {msg}",
+    "REVIEW_RESULT_INVALID": "Invalid approval result file: {msg}",
     "archive": {
       "inputMissing": ".ttsmod file not found: {path}",
       "notZip": "Not a valid ZIP file (a .ttsmod must be a ZIP): {path}",
@@ -813,5 +1106,14 @@
     "yes": "Yes",
     "no": "No",
     "confirm": "Confirm"
+  },
+  "import": {
+    "warning": {
+      "packYamlMissing": "Workspace has no pack.yaml; skipping the pack-name consistency check: {root}",
+      "packNameMismatch": "Import manifest declares pack name {manifestPack}, but pack.yaml says {packName} (warning only, nothing written back)",
+      "unregisteredType": "Object type {type} is not registered in the type registry; importing it as an open type: {name}",
+      "skippedFiles": "Deck {deck} skipped non-image files or subdirectories (not imported): {files}",
+      "unmappedObjectFile": "Object {name} field {field} could not be mapped to an objects.csv column; the file is still copied but not recorded in the ledger"
+    }
   }
 }

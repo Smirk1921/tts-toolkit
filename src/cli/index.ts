@@ -23,8 +23,13 @@ import { assetsCommand } from "./commands/assets.js";
 import { configCommand } from "./commands/config.js";
 import { deckCommand } from "./commands/deck.js";
 import { execCommand } from "./commands/exec.js";
+import { fetchCommand } from "./commands/fetch.js";
+import { hostCommand } from "./commands/host.js";
+import { importCommand } from "./commands/import.js";
+import { migrateCommand } from "./commands/migrate.js";
 import { packCommand } from "./commands/pack.js";
 import { pullCommand } from "./commands/pull.js";
+import { reviewCommand } from "./commands/review.js";
 import { statusCommand } from "./commands/status.js";
 import { vcsCommand } from "./commands/vcs.js";
 
@@ -172,6 +177,11 @@ program.addCommand(assetsCommand);
 program.addCommand(packCommand);
 program.addCommand(deckCommand);
 program.addCommand(vcsCommand);
+program.addCommand(importCommand);
+program.addCommand(hostCommand);
+program.addCommand(fetchCommand);
+program.addCommand(migrateCommand);
+program.addCommand(reviewCommand);
 localizeCommandTree(program);
 
 /**

@@ -102,7 +102,7 @@ assets: []
 
 - **本契约目前没有生产者**：全仓 `grep` 确认，`readAssetsManifest` / `writeAssetsManifest` 在 `src/pack/manifest.ts` 与其单元测试之外**没有任何调用方**（`src/pack/`、`src/cli/` 均无）。也就是说 `assets.yaml` 的 schema 与读写已就绪，但**切片 / 导入 / 上传等流程还没有任何一处往它里面写**。
 - 因此 B2/B3 是它的第一批量产消费者：由谁负责登记条目（切片时？导入 `assets.yaml` 时？上传换 URL 后？）、登记粒度（每个卡图一条还是每张图集一条）**尚未决定**，动工前需与主窗口确认，并把决定写进各自窗口的文档；本文档届时同步更新。
-- ⚠️ **命名冲突提醒**：`方案设计.md` §5.11（`:1381` 起）里的 `assets.yaml` 指的是另一个东西——**素材导入清单**（顶层是 `pack:` / `decks:` / `objects:`，描述"把哪些文件装进哪个卡堆"）。Run 1 落地的 `assets.yaml` 是**素材 URL 台账**（顶层 `schema_version` + `assets[]`），两者同名不同物。B2/B3 引用"assets.yaml"时必须写清指哪一个；若要同时保留两种用途，需主窗口先裁决文件名（建议把导入清单改名，避免工作区里出现两份含义不同的 `assets.yaml`）。
+- ⚠️ **命名冲突已裁决（窗口 C 主窗口，2026-10-05）**：`方案设计.md` §5.11 的"素材导入清单"（顶层 `pack:` / `decks:` / `objects:`，描述"把哪些文件装进哪个卡堆"）与本文件的 `assets.yaml`（素材 URL 台账，顶层 `schema_version` + `assets[]`）同名不同物。裁决结果：**导入清单定名 `import.yaml`**，契约见 `docs/schemas/import.yaml.md`；**本文件 `assets.yaml` 保留给 URL 台账**。消费方引用时按此区分，不再存在歧义。
 - 错误码：`ASSETS_INVALID`（非法 YAML / 不合 schema / 写前校验失败）/ `ASSETS_READ_FAILED` / `ASSETS_WRITE_FAILED`；**文件不存在不是错误**（返回 `null`）。
 - `root` 传空串或空白字符串会抛普通 `Error`（调用方编程错误），不是 `PackError`。
 
@@ -113,3 +113,4 @@ assets: []
 | 日期 | 变更 |
 | --- | --- |
 | 2026-10-04 | 初版（窗口 B1 / Run 2 模板化）。契约来自 `src/pack/manifest.ts`，Run 2 未修改该模块。 |
+| 2026-10-05 | §5 命名冲突裁决落笔（窗口 C 主窗口）：导入清单定名 `import.yaml`，本文件保留给 URL 台账。 |

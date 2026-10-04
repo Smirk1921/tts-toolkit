@@ -567,6 +567,19 @@
       "duplicateId": "objects.csv 存在重复 asset_id：{path}（{assetId}）",
       "writeFailed": "objects.csv 写入失败：{path}（{detail}）"
     },
+    "review": {
+      "configNotFound": "未找到审批配置：{path}",
+      "configReadFailed": "审批配置读取失败：{path}（{detail}）",
+      "configInputInvalid": "审批配置入参无效：{detail}",
+      "configInvalid": "审批配置校验失败：{path}（{issues}）",
+      "configWriteFailed": "审批配置写入失败：{path}（{detail}）",
+      "appMissing": "未找到审批工具的 python 解释器：{detail}",
+      "callFailed": "审批工具调用失败：{detail}",
+      "gateInputInvalid": "审批门禁入参无效：{detail}",
+      "resultNotFound": "未找到审批结果文件：{path}",
+      "resultReadFailed": "审批结果文件读取失败：{path}（{detail}）",
+      "resultInvalid": "审批结果文件无效：{path}（{detail}）"
+    },
     "host": {
       "notFound": "未找到图床 {id}：用 tts host list 查看可用图床（内置默认 steamcloud，其余需在配置文件或插件目录声明）",
       "invalidInput": "上传入参无效：{detail}",

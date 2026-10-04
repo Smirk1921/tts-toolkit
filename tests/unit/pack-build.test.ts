@@ -12,8 +12,10 @@
  *    这一层不写 pack.yaml：输出名回退骨架 SaveName，一并钉住该回退行为。
  * 2. 约束 8 回归（较完整的骨架夹具，含牌堆 / 内嵌对象 / 包）：
  *    无改动时输出与骨架逐字节一致、Global 与内嵌对象的定点替换、data.json
- *    整体替换与"先整体替换再打脚本补丁"的顺序、ObjectStates 顺序保留、
- *    同 guid 多候选取字典序、孤儿对象 / 牌堆 / UI、显式 outPath、骨架非法等。
+ *    整体替换与"先整体替换再打脚本补丁"的顺序、deck URL 补丁（decksPatched
+ *    按 URL 差分计数、共享旧 URL 的引用处经 walkSaveUrls 联动写回、未改
+ *    对象逐字节一致）、ObjectStates 顺序保留、同 guid 多候选取字典序、
+ *    孤儿对象 / 牌堆 / UI、显式 outPath、骨架非法等。
  *
  * 纯文件 IO（os.tmpdir() 下的临时目录），无网络、无 TTS、无 git 依赖：
  * - 错误按 PackError.code（机器可读）断言，不依赖错误文案——文案走 t()，
@@ -223,6 +225,63 @@ async function writeObjectData(root: string, kind: 'objects' | 'decks', name: st
   await writeFile(path.join(dir, 'data.json'), JSON.stringify(data, null, 2), 'utf8');
 }
 
+/** deck URL 补丁夹具：两个牌堆共享同一张图集 FaceURL + 一个无 URL 的棋子 */
+function deckPatchSkeleton(): Record<string, unknown> {
+  return {
+    SaveName: '单元测试存档',
+    ObjectStates: [
+      {
+        GUID: 'aa11bb',
+        Name: 'Deck',
+        Nickname: '测试牌堆',
+        CustomDeck: { '1': { FaceURL: 'http://example.invalid/face.png', BackURL: 'http://example.invalid/back.png' } },
+        ContainedObjects: [
+          {
+            GUID: 'cc22dd',
+            Name: 'Card',
+            Nickname: '杀',
+            // 坑 4：每张 Card 完整复制一份 CustomDeck（同一图集 URL 的另一处引用）
+            CustomDeck: { '1': { FaceURL: 'http://example.invalid/face.png' } },
+          },
+        ],
+      },
+      {
+        GUID: 'bb22cc',
+        Name: 'Deck',
+        Nickname: '共享牌堆',
+        // shared_with 场景：与 aa11bb 引用同一张图集（deck.yaml 不参与 build，值匹配即联动）
+        CustomDeck: { '1': { FaceURL: 'http://example.invalid/face.png' } },
+      },
+      { GUID: 'dd33ee', Name: 'Custom_Pawn', Nickname: 'Pawn', Transform: { scaleX: 0.5 } },
+    ],
+  };
+}
+
+/**
+ * 建一个 deck URL 补丁夹具工作区：.tts/skeleton.json（{@link deckPatchSkeleton}）
+ * + pack.yaml。decks/ 下两个牌堆的 data.json 按用例需要写入。
+ */
+async function makeDeckPatchPack(): Promise<string> {
+  const root = path.join(tempRoot, 'pack');
+  await mkdir(path.join(root, '.tts'), { recursive: true });
+  await writeFile(
+    path.join(root, '.tts', 'skeleton.json'),
+    JSON.stringify(deckPatchSkeleton(), null, 2),
+    'utf8',
+  );
+  await writePackYaml(root, {
+    schema_version: 1,
+    name: '测试图包',
+    workshop_id: null,
+    source_mod: null,
+    host: 'steamcloud',
+    vcs: { lfs: 'disabled-no-lfs' },
+    paths: { workdir: '.' },
+    upload: { prefix: '' },
+  });
+  return root;
+}
+
 /** 读取构建产物并解析（defaultOutPath 依赖 pack.yaml 的 name="测试图包"） */
 async function readBuilt(root: string): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(path.join(root, 'dist', '测试图包.json'), 'utf8')) as Record<string, unknown>;
@@ -287,11 +346,12 @@ describe('buildSave（约束 8：定点替换，不重新生成）', () => {
     expect(result.warnings).toEqual([]); // 所有 guid 都在骨架里（含内嵌的 cc22dd）
 
     // 计数：脚本 4（Global / 牌堆 / 棋子 / 内嵌卡），UI 2（Global / 棋子），
-    // 整体替换 2（decks 的牌堆 + objects 的包），deck/patch 本窗口恒 0
+    // 整体替换 2（decks 的牌堆 + objects 的包），deck/patch 1（牌堆 FaceURL
+    // 与骨架不一致，走 deck/patch 差分；整体替换不重复计入 decksPatched）
     expect(result.scriptsReplaced).toBe(4);
     expect(result.uiReplaced).toBe(2);
     expect(result.objectsReplaced).toBe(2);
-    expect(result.decksPatched).toBe(0);
+    expect(result.decksPatched).toBe(1);
 
     const built = await readBuilt(root);
     const states = built.ObjectStates as Array<Record<string, unknown>>;
@@ -317,6 +377,79 @@ describe('buildSave（约束 8：定点替换，不重新生成）', () => {
 
     // 包：整体替换为工作区版本
     expect(states[2]).toEqual({ GUID: 'ee44ff', Name: 'Bag', LuaScriptState: 'new-state', Description: '改过的包' });
+  }, 30_000);
+
+  it('deck URL 补丁：改动牌堆 URL → decksPatched 递增，共享旧 URL 的引用处同步写回，未改对象逐字节一致', async () => {
+    const root = await makeDeckPatchPack();
+
+    // 只改 aa11bb 的 FaceURL（BackURL 不动）；bb22cc 的 data.json 与骨架完全一致
+    await writeObjectData(root, 'decks', 'aa11bb.测试牌堆', {
+      GUID: 'aa11bb',
+      Name: 'Deck',
+      Nickname: '测试牌堆',
+      CustomDeck: {
+        '1': { FaceURL: 'http://example.invalid/new-face.png', BackURL: 'http://example.invalid/back.png' },
+      },
+      ContainedObjects: [
+        {
+          GUID: 'cc22dd',
+          Name: 'Card',
+          Nickname: '杀',
+          // data.json 里副本仍是旧 URL：写回阶段按值覆盖（方案设计 §4.5.1"+ 每张 Card 副本"）
+          CustomDeck: { '1': { FaceURL: 'http://example.invalid/face.png' } },
+        },
+      ],
+    });
+    await writeObjectData(root, 'decks', 'bb22cc.共享牌堆', {
+      GUID: 'bb22cc',
+      Name: 'Deck',
+      Nickname: '共享牌堆',
+      CustomDeck: { '1': { FaceURL: 'http://example.invalid/face.png' } },
+    });
+
+    const result = await buildSave({ root });
+
+    // decksPatched 只计 URL 与骨架不一致的牌堆：aa11bb 改了（1），bb22cc 没改（不计）
+    expect(result.decksPatched).toBe(1);
+    expect(result.objectsReplaced).toBe(2); // 两个牌堆的 data.json 都整体替换
+    expect(result.warnings).toEqual([]); // 全部 GUID（含内嵌 cc22dd）都在骨架里
+
+    const built = await readBuilt(root);
+    const states = built.ObjectStates as Array<Record<string, unknown>>;
+
+    // aa11bb：整体替换携带新 FaceURL，未改的 BackURL 原样保留
+    expect((states[0].CustomDeck as Record<string, unknown>)['1']).toEqual({
+      FaceURL: 'http://example.invalid/new-face.png',
+      BackURL: 'http://example.invalid/back.png',
+    });
+    // aa11bb 内嵌卡的 CustomDeck 副本：旧 URL 按值写回为新 URL
+    const card = (states[0].ContainedObjects as Array<Record<string, unknown>>)[0];
+    expect((card.CustomDeck as Record<string, unknown>)['1']).toEqual({
+      FaceURL: 'http://example.invalid/new-face.png',
+    });
+    // bb22cc：data.json 未改 URL，但共享同一张图集 → 旧 FaceURL 联动写回（坑 2）
+    expect((states[1].CustomDeck as Record<string, unknown>)['1']).toEqual({
+      FaceURL: 'http://example.invalid/new-face.png',
+    });
+
+    // 未改对象逐字节一致：dd33ee（无 URL 字段、不在任何映射里）与骨架逐字节一致
+    const skeletonText = await readFile(path.join(root, '.tts', 'skeleton.json'), 'utf8');
+    const skeleton = JSON.parse(skeletonText) as { ObjectStates: Array<Record<string, unknown>> };
+    expect(JSON.stringify(states[2])).toBe(JSON.stringify(skeleton.ObjectStates[2]));
+
+    // 全文级回归：输出 = 骨架文本中且仅如下三处差异（其余逐字节一致）——
+    // ① aa11bb 整体替换为 data.json；② 其内嵌卡副本 FaceURL 写回；③ bb22cc FaceURL 联动写回
+    const expected = JSON.parse(skeletonText) as Record<string, unknown>;
+    const expectedStates = expected.ObjectStates as Array<Record<string, unknown>>;
+    expectedStates[0] = JSON.parse(
+      await readFile(path.join(root, 'decks', 'aa11bb.测试牌堆', 'data.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    ((expectedStates[0].ContainedObjects as Array<Record<string, unknown>>)[0].CustomDeck as Record<string, unknown>)[
+      '1'
+    ] = { FaceURL: 'http://example.invalid/new-face.png' };
+    (((expectedStates[1].CustomDeck as Record<string, unknown>)['1'] as Record<string, unknown>).FaceURL) =
+      'http://example.invalid/new-face.png';
+    expect(await readFile(result.outPath, 'utf8')).toBe(JSON.stringify(expected, null, 2));
   }, 30_000);
 
   it('工作区删除的对象保留骨架版本；骨架有而工作区没改的脚本原样保留', async () => {

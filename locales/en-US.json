@@ -567,6 +567,19 @@
       "duplicateId": "Duplicate asset_id in objects.csv: {path} ({assetId})",
       "writeFailed": "Failed to write objects.csv: {path} ({detail})"
     },
+    "review": {
+      "configNotFound": "Approval config not found: {path}",
+      "configReadFailed": "Failed to read approval config: {path} ({detail})",
+      "configInputInvalid": "Invalid approval config input: {detail}",
+      "configInvalid": "Approval config validation failed: {path} ({issues})",
+      "configWriteFailed": "Failed to write approval config: {path} ({detail})",
+      "appMissing": "Python interpreter for the approval tool not found: {detail}",
+      "callFailed": "Approval tool call failed: {detail}",
+      "gateInputInvalid": "Invalid review gate input: {detail}",
+      "resultNotFound": "Approval result file not found: {path}",
+      "resultReadFailed": "Failed to read approval result file: {path} ({detail})",
+      "resultInvalid": "Invalid approval result file: {path} ({detail})"
+    },
     "host": {
       "notFound": "Image host {id} not found: run tts host list to see available hosts (built-in default is steamcloud; others must be declared in the config file or the plugin directory)",
       "invalidInput": "Invalid upload input: {detail}",

@@ -24,7 +24,13 @@
  *    - objects|decks/：每个子目录读 **data.json 的 GUID 字段**建索引（与
  *      unpack 的约定一致：绝不解析目录名，一律以 data.json 的 GUID 为准——
  *      用户改的只是目录名里的"名字部分"，数据仍按 GUID 落到正确的对象上）。
- * 3. 深遍历骨架（保持 ObjectStates 原顺序，逐个对象**原地**处理，绝不深拷贝）：
+ * 3. deck URL 补丁差分（deck/patch 流水线，只读，须在深遍历之前——以骨架
+ *    原始 URL 为差分基准）：对 decks/ 下 GUID 存在于骨架的每个牌堆，用
+ *    src/deck/patch.ts 的 walkSaveUrls（全仓唯一 URL 遍历器，本模块不重写
+ *    遍历）分别收集骨架对象与工作区 data.json 的**牌堆自身** URL 字段值，
+ *    同一字段位置上骨架值 ≠ 工作区值 → 记一条 old→new URL 映射；产生映射
+ *    的牌堆计入 decksPatched。{lang} 形式的值（坑 5）跳过，绝不参与差分。
+ * 4. 深遍历骨架（保持 ObjectStates 原顺序，逐个对象**原地**处理，绝不深拷贝）：
  *    - 顶层 LuaScript / XmlUI（GUID=-1 的 Global）：`<root>/scripts/Global.lua`
  *      存在则读文件内容替换 skeleton.LuaScript（字段缺失时创建），否则保留
  *      骨架原值；XmlUI 同理（ui/Global.xml）；
@@ -42,8 +48,15 @@
  *      是 unpack 时刻的旧值，scripts/<guid>.lua 才是用户编辑后的真值；两者都
  *      命中时脚本补丁必须落在替换后的对象上，否则脚本改动会被 data.json 的
  *      旧值覆盖丢失。
- * 4. dryRun=true：不写任何文件、不创建 dist/，只统计计数并返回。
- * 5. dryRun=false：确保输出目录存在后，JSON.stringify(skeleton, null, 2)
+ * 5. deck URL 写回（deck/patch 流水线，整体替换**之后**）：用 walkSaveUrls
+ *    遍历整份存档，凡 URL 字段当前值命中第 3 步 old→new 映射的，原地写回
+ *    新值。牌堆自身已随 data.json 整体替换携带新 URL（遍历命中不到旧值），
+ *    此步真正覆盖的是**其余引用旧 URL 的位置**：shared_with 的其他牌堆、
+ *    内嵌 Card 的 CustomDeck 副本、乃至根对象 SkyURL / TableURL——兑现
+ *    方案设计 §4.6.1 "build 后旧 URL 不再被引用"的验收口径。值匹配（而非
+ *    按位置）是有意的：同一图集 URL 在存档里出现多少处就更新多少处（坑 2）。
+ * 6. dryRun=true：不写任何文件、不创建 dist/，只统计计数并返回。
+ * 7. dryRun=false：确保输出目录存在后，JSON.stringify(skeleton, null, 2)
  *    写入 outPath。默认 `<root>/dist/<净化(pack.yaml name)>.json`；pack.yaml
  *    缺失（PACK_NOT_FOUND）时回退骨架 SaveName，净化后为空再回退 sanitizeName
  *    的兜底 "object"；pack.yaml 存在但损坏（PACK_INVALID / PACK_READ_FAILED）
@@ -57,9 +70,11 @@
  *   计入——此时输出仍与骨架逐字节一致；
  * - objectsReplaced：被工作区 data.json 整体替换的对象数（objects/ 与 decks/
  *   两个来源都计入）；
- * - decksPatched：留给将来的 deck/patch 流水线（deck.yaml 卡表 → 图集重建
- *   ContainedObjects / CustomDeck，阶段 2B），**本窗口恒为 0**——decks/ 的
- *   data.json 整体替换计入 objectsReplaced，不算这里；
+ * - decksPatched：走 deck/patch 流水线的牌堆数——工作区 decks/ 下、URL 字段
+ *   与骨架不一致（第 3 步差分产生至少一条 old→new 映射）的牌堆数。这些牌堆
+ *   的 data.json 整体替换同时计入 objectsReplaced（两个计数口径不同：前者
+ *   只看 URL 差分，整体替换哪怕 URL 一个没变也不算这里）；映射应用到的
+ *   其他对象（共享图集引用处）不计数——计的是"处理的牌堆数"不是"写字段数"；
  * - warnings：不中断构建的问题清单（中文、经 t()），例如工作区有但骨架没有
  *   的 GUID（孤儿脚本 / UI / 对象目录）、同一 guid 多个脚本 / UI 候选、
  *   data.json 不可读 / 重复等。孤儿文件不会被使用，构建照常进行。
@@ -97,6 +112,7 @@ import type { SaveFile } from "@tts-tools/savefile";
 import { z } from "zod";
 
 import { t } from "../i18n/index.js";
+import { walkSaveUrls } from "../deck/patch.js";
 import { GLOBAL_GUID } from "../protocol/messages.js";
 import {
   decksDir,
@@ -137,7 +153,13 @@ export interface BuildResult {
   scriptsReplaced: number;
   /** 实际读工作区文件替换了 XmlUI 的对象数（计数语义同 {@link BuildResult.scriptsReplaced}） */
   uiReplaced: number;
-  /** 走 deck/patch 流水线的牌堆数（阶段 2B 实现，本窗口恒为 0，见模块头注释） */
+  /**
+   * 走 deck/patch 流水线的牌堆数：工作区 decks/ 下、URL 字段与骨架不一致
+   * （差分产生至少一条 old→new URL 映射）的牌堆数。这些牌堆的 data.json
+   * 整体替换同时计入 {@link BuildResult.objectsReplaced}；映射经 walkSaveUrls
+   * 应用到全存档中引用旧 URL 的字段（共享图集的其他牌堆、内嵌 Card 的
+   * CustomDeck 副本等），那些对象不计数——计的是"处理的牌堆数"。
+   */
   decksPatched: number;
   /** 被工作区 data.json 整体替换的对象数（objects/ 与 decks/ 都计入） */
   objectsReplaced: number;
@@ -173,7 +195,7 @@ interface BuildContext {
   objectIndex: Map<string, WorkspaceObjectEntry>;
   /** 累积的警告（中文、经 t()） */
   warnings: string[];
-  /** 四个计数（decks 本窗口恒 0，见模块头注释） */
+  /** 四个计数（decks = deck/patch 差分命中的牌堆数，见 {@link collectDeckUrlPatches}） */
   counters: { scripts: number; ui: number; decks: number; objects: number };
 }
 
@@ -572,6 +594,151 @@ function pushOrphanWarnings(ctx: BuildContext, skeletonGuids: ReadonlySet<string
 }
 
 /**
+ * 收集牌堆 URL 补丁（deck/patch 流水线的差分阶段，模块头注释第 3 步）。
+ *
+ * **必须在深遍历（整体替换）之前调用**：以骨架里该牌堆的原始 URL 为差分
+ * 基准，整体替换后骨架原值已被工作区 data.json 覆盖，无从差分。
+ *
+ * 遍历一律走 src/deck/patch.ts 的 {@link walkSaveUrls}（全仓唯一 URL 遍历器，
+ * 本模块不重写 ContainedObjects 递归）。对 ctx.objectIndex 里 kind==="decks"
+ * 的每个条目：
+ * - 骨架侧一次遍历收集各牌堆**自身**的 URL 字段值（guid → fieldPath → 值
+ *   列表；内嵌 Card 有自己的 GUID，不在此列——它们的 CustomDeck 副本随
+ *   data.json 整体替换更新，其余引用处由写回阶段按值覆盖）；
+ * - 工作区侧逐牌堆遍历其 data.json（同样只取 guid === 牌堆 GUID 的字段），
+ *   与骨架侧按 fieldPath 归组、组内按遍历序（walkSaveUrls 固定次序，两侧
+ *   一致）配对：骨架值 ≠ 工作区值 → 记一条 old→new 映射；
+ * - 牌堆产生至少一条映射 → ctx.counters.decks 加一（decksPatched）。
+ *
+ * 骨架里没有对应 GUID 的孤儿牌堆自然无骨架值可比（跳过；孤儿警告已在
+ * {@link pushOrphanWarnings} 记录）。工作区新增的 URL 字段（骨架同位置
+ * 无值）没有旧值可映射，同样跳过——它们随 data.json 整体替换进入输出。
+ *
+ * 映射冲突（两个牌堆把同一旧 URL 改成不同新值——共享图集被不一致地编辑）
+ * 先到先得：objectIndex 的插入序（objects/ 先于 decks/、目录内字典序）
+ * 保证结果确定。静默保留第一条：本模块没有为该情形定义告警键，而确定性
+ * 的取舍优于不确定的输出；两份 data.json 本应一致，不一致属于用户数据问题。
+ *
+ * @param ctx 遍历上下文（读 objectIndex，写 counters.decks）
+ * @param skeleton 已解析的骨架存档根对象（只读，本函数不修改它）
+ * @returns 全局 old→new URL 映射（无牌堆或无差异时为空 Map）
+ */
+function collectDeckUrlPatches(ctx: BuildContext, skeleton: unknown): Map<string, string> {
+  const urlMap = new Map<string, string>();
+  const deckGuids = new Set<string>();
+  for (const entry of ctx.objectIndex.values()) {
+    if (entry.kind === "decks") {
+      deckGuids.add(entry.guid);
+    }
+  }
+  if (deckGuids.size === 0) {
+    return urlMap; // 工作区没有牌堆：不遍历骨架（大存档下省一遍全量遍历）
+  }
+
+  // 骨架侧：一次遍历，收集各牌堆自身的 URL 字段值（只读，visitor 不写回）
+  const skeletonUrls = new Map<string, Map<string, string[]>>();
+  walkSaveUrls(
+    skeleton,
+    (loc) => {
+      if (!deckGuids.has(loc.guid)) {
+        return;
+      }
+      let byField = skeletonUrls.get(loc.guid);
+      if (byField === undefined) {
+        byField = new Map<string, string[]>();
+        skeletonUrls.set(loc.guid, byField);
+      }
+      const key = loc.fieldPath.join(".");
+      const bucket = byField.get(key);
+      if (bucket === undefined) {
+        byField.set(key, [loc.currentValue]);
+      } else {
+        bucket.push(loc.currentValue);
+      }
+    },
+    { skipLangVariants: true }, // 坑 5：{lang} 值原样保留，不进差分
+  );
+
+  // 工作区侧 + 差分：objectIndex 迭代序确定（objects/ 先于 decks/、字典序），
+  // 冲突映射的"先到先得"因此可复现
+  for (const entry of ctx.objectIndex.values()) {
+    if (entry.kind !== "decks") {
+      continue;
+    }
+    const byField = skeletonUrls.get(entry.guid);
+    if (byField === undefined) {
+      continue; // 孤儿牌堆（骨架没有该 GUID）：无可差分
+    }
+    const wsUrls = new Map<string, string[]>();
+    walkSaveUrls(
+      entry.data,
+      (loc) => {
+        if (loc.guid !== entry.guid) {
+          return; // 只差分牌堆自身字段（内嵌卡 / 子对象有自己的 GUID）
+        }
+        const key = loc.fieldPath.join(".");
+        const bucket = wsUrls.get(key);
+        if (bucket === undefined) {
+          wsUrls.set(key, [loc.currentValue]);
+        } else {
+          bucket.push(loc.currentValue);
+        }
+      },
+      { skipLangVariants: true }, // 坑 5：同上
+    );
+    let diffs = 0;
+    for (const [key, wsVals] of wsUrls) {
+      const skelVals = byField.get(key);
+      if (skelVals === undefined) {
+        continue; // 工作区新增的 URL 字段：骨架没有旧值可映射
+      }
+      const pairCount = Math.min(skelVals.length, wsVals.length);
+      for (let i = 0; i < pairCount; i++) {
+        const oldUrl = skelVals[i];
+        const newUrl = wsVals[i];
+        if (oldUrl === newUrl) {
+          continue;
+        }
+        diffs += 1;
+        if (!urlMap.has(oldUrl)) {
+          urlMap.set(oldUrl, newUrl); // 冲突先到先得（见函数头注释）
+        }
+      }
+    }
+    if (diffs > 0) {
+      ctx.counters.decks += 1;
+    }
+  }
+  return urlMap;
+}
+
+/**
+ * 应用牌堆 URL 补丁（deck/patch 流水线的写回阶段，模块头注释第 5 步）。
+ *
+ * **必须在深遍历（整体替换）之后调用**：牌堆对象自身已随 data.json 携带
+ * 新 URL，遍历命中不到旧值、不会重复写；此步覆盖的是其余引用旧 URL 的
+ * 位置（shared_with 的其他牌堆、其他牌堆内嵌 Card 的 CustomDeck 副本、
+ * 根对象 SkyURL / TableURL 等），兑现"build 后旧 URL 不再被引用"。
+ * 值匹配（而非按对象定位）是有意的：同一图集 URL 出现多少处就更新多少处。
+ *
+ * 写回是原地的（walkSaveUrls 直接改 host 字段，绝不深拷贝）——约束 8 的
+ * "未改动对象与骨架逐字节一致"不破：URL 值不命中映射的对象原引用保留。
+ *
+ * @param skeleton 已整体替换的存档根对象（原地修改）
+ * @param urlMap {@link collectDeckUrlPatches} 产出的 old→new 映射
+ */
+function applyDeckUrlPatches(skeleton: unknown, urlMap: ReadonlyMap<string, string>): void {
+  if (urlMap.size === 0) {
+    return;
+  }
+  walkSaveUrls(
+    skeleton,
+    (loc) => urlMap.get(loc.currentValue), // 未命中返回 undefined → 不写回
+    { skipLangVariants: true }, // 坑 5：{lang} 值原样保留，绝不参与值匹配
+  );
+}
+
+/**
  * 计算默认输出路径 `<root>/dist/<净化图包名>.json`。
  *
  * 图包名优先取 pack.yaml 的 name（PACK_NOT_FOUND 时回退骨架 SaveName；
@@ -693,10 +860,16 @@ export async function buildSave(opts: BuildOptions): Promise<BuildResult> {
       ctx.counters.ui += 1;
     }
 
-    // —— 5. 深遍历 ObjectStates（保持原顺序，原地替换，未改动对象保留引用）——
+    // —— 5. deck URL 补丁差分（须在整体替换前：以骨架原始 URL 为差分基准）——
+    const deckUrlMap = collectDeckUrlPatches(ctx, skeleton);
+
+    // —— 6. 深遍历 ObjectStates（保持原顺序，原地替换，未改动对象保留引用）——
     await processContainer(states, "ObjectStates", ctx);
 
-    // —— 6. 输出 ——
+    // —— 7. deck URL 写回（值匹配的全部位置，含共享图集引用处）——
+    applyDeckUrlPatches(skeleton, deckUrlMap);
+
+    // —— 8. 输出 ——
     const outPath = opts.outPath !== undefined ? path.resolve(opts.outPath) : await defaultOutPath(root, skeleton);
     if (!dryRun) {
       await mkdir(path.dirname(outPath), { recursive: true });
@@ -708,7 +881,7 @@ export async function buildSave(opts: BuildOptions): Promise<BuildResult> {
       dryRun,
       scriptsReplaced: ctx.counters.scripts,
       uiReplaced: ctx.counters.ui,
-      decksPatched: ctx.counters.decks, // deck/patch 流水线阶段 2B 实现，本窗口恒 0
+      decksPatched: ctx.counters.decks, // deck/patch 差分命中的牌堆数（见 collectDeckUrlPatches）
       objectsReplaced: ctx.counters.objects,
       warnings: ctx.warnings,
     };

@@ -26,6 +26,7 @@ import { execCommand } from "./commands/exec.js";
 import { packCommand } from "./commands/pack.js";
 import { pullCommand } from "./commands/pull.js";
 import { statusCommand } from "./commands/status.js";
+import { vcsCommand } from "./commands/vcs.js";
 
 /** 支持的输出语言（与 src/i18n/index.ts 保持一致）。 */
 const SUPPORTED_LANGS: readonly Lang[] = ["zh-CN", "en-US"];
@@ -170,6 +171,7 @@ program.addCommand(execCommand);
 program.addCommand(assetsCommand);
 program.addCommand(packCommand);
 program.addCommand(deckCommand);
+program.addCommand(vcsCommand);
 localizeCommandTree(program);
 
 /**

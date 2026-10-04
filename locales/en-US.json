@@ -81,6 +81,31 @@
             "name": "Pack name",
             "out": "Output directory (default ./packs/<name>)"
           }
+        },
+        "list": {
+          "description": "List all registered packs",
+          "option": {
+            "root": "Pack index root directory (default: current directory)",
+            "dirty": "Only show packs with uncommitted changes"
+          }
+        },
+        "status": {
+          "description": "Show details for a single pack",
+          "argument": {
+            "dir": "Pack subdirectory name"
+          },
+          "option": {
+            "root": "Pack index root directory (default: current directory)"
+          }
+        },
+        "open": {
+          "description": "Open the pack directory in the system file manager",
+          "argument": {
+            "dir": "Pack subdirectory name"
+          },
+          "option": {
+            "root": "Pack index root directory (default: current directory)"
+          }
         }
       },
       "deck": {
@@ -130,6 +155,68 @@
             "root": "Pack root directory",
             "cmyk": "Skip the CMYK colour space check",
             "atlasSize": "Skip the atlas size / grid consistency check"
+          }
+        }
+      },
+      "vcs": {
+        "description": "Version control semantic wrapper (git + lfs)",
+        "status": {
+          "description": "Show workspace status in pack language",
+          "option": {
+            "root": "Pack root directory (default: current directory)",
+            "conflicts": "Also show a semantic report of merge conflicts"
+          }
+        },
+        "commit": {
+          "description": "Auto-generate a Chinese commit message and commit",
+          "option": {
+            "root": "Pack root directory (default: current directory)",
+            "message": "User-supplied message (prepended to the auto summary)",
+            "dryRun": "Only generate the message; do not commit",
+            "noAdd": "Do not run git add -A (commit staged content only)"
+          }
+        },
+        "verify": {
+          "description": "Workspace + git state verification (must run after a merge)",
+          "option": {
+            "root": "Pack root directory (default: current directory)",
+            "skipCmyk": "Skip the CMYK colour mode check (faster)",
+            "skipAtlas": "Skip the atlas size check (faster)",
+            "skipGit": "Skip the git state check"
+          }
+        },
+        "size": {
+          "description": "Report the size of each repository part",
+          "option": {
+            "root": "Pack root directory (default: current directory)"
+          }
+        },
+        "lfs": {
+          "description": "git-lfs state management",
+          "status": {
+            "description": "Show three-way lfs consistency",
+            "option": {
+              "root": "Pack root directory"
+            }
+          },
+          "enable": {
+            "description": "Enable lfs (writes .gitattributes + pack.yaml)",
+            "option": {
+              "root": "Pack root directory"
+            }
+          },
+          "disable": {
+            "description": "Disable lfs (clears the lfs rules from .gitattributes)",
+            "option": {
+              "root": "Pack root directory",
+              "yes": "Skip the confirmation prompt (script use)"
+            }
+          },
+          "migrate": {
+            "description": "Migrate already-committed binaries to lfs (git lfs migrate import)",
+            "option": {
+              "root": "Pack root directory"
+            }
           }
         }
       },
@@ -206,6 +293,17 @@
       },
       "unpack": {
         "done": "Unpacked {save} to {outDir}: {scripts} scripts, {ui} UIs, {objects} objects"
+      },
+      "list": {
+        "empty": "No registered packs in the current directory (.registry.yaml is empty or missing)",
+        "header": "Registered packs ({count}):"
+      },
+      "status": {
+        "notFound": "Pack {dir} not found in .registry.yaml"
+      },
+      "open": {
+        "notFound": "Pack {dir} not found in .registry.yaml",
+        "done": "Opened {path}"
       }
     },
     "deck": {
@@ -235,6 +333,43 @@
         "summary": "Verification found {errors} error(s) / {warnings} warning(s)"
       },
       "invalidNumber": "{option} must be a positive integer (got {value})"
+    },
+    "vcs": {
+      "status": {
+        "clean": "Workspace clean; no uncommitted changes",
+        "unknownNote": "{count} more change(s) could not be interpreted semantically (see the unknown lines above)",
+        "conflictsHeader": "Found {count} merge conflict(s):",
+        "cardsCsvWarning": "⚠️  cards.csv itself is conflicted; resolve it first (card lookups are unavailable until then)"
+      },
+      "commit": {
+        "clean": "Workspace clean; nothing to commit",
+        "dryRunMessage": "Commit message that would be used:\n{message}",
+        "done": "Committed {hash}: {message}"
+      },
+      "verify": {
+        "summary": "Verification finished: {errors} error(s), {warnings} warning(s)"
+      },
+      "size": {
+        "workspace": "Workspace size: {bytes}",
+        "git": ".git size: {bytes}",
+        "lfsObjects": ".git/lfs/objects size: {bytes}",
+        "breakdownHeader": "Breakdown by directory:"
+      },
+      "lfs": {
+        "installed": "git-lfs is installed (version {version})",
+        "notInstalled": "git-lfs is not installed",
+        "attributesHasLfs": ".gitattributes contains lfs rules: {yes}",
+        "packYamlLfs": "pack.yaml vcs.lfs: {mode}",
+        "consistent": "All three sources agree (lfs state is consistent)",
+        "enableDone": "lfs enabled (.gitattributes + pack.yaml written)",
+        "alreadyEnabled": "lfs is already enabled; nothing to change",
+        "disableWarning": "⚠️  After disabling git-lfs:\n   - Every card image edit makes git store a full new copy\n   - 10 edit rounds on one pack can bloat the repo to tens of GB\n   - Pushes to a remote become very slow; some hosts may reject them (GitHub's 100MB per-file limit)",
+        "disableConfirm": "Disable anyway? This is only advisable for a purely local pack that will never be pushed.\nType yes to confirm:",
+        "disableCancelled": "Cancelled",
+        "disableNeedsYes": "Non-interactive runs must pass --yes explicitly to disable",
+        "disableDone": "lfs disabled (lfs rules cleared from .gitattributes; pack.yaml written as disabled)",
+        "migrateDone": "lfs history migration complete:\n{output}"
+      }
     },
     "pull": {
       "done": "Pull complete: {scripts} script(s), {ui} UI file(s)",
@@ -463,7 +598,21 @@
     "PARENT_CHILD_DECK_MISMATCH": "Parent/child CustomDeck mismatch: {msg}",
     "SHARED_ATLAS_NOT_DECLARED": "Shared atlas not declared in deck.yaml: {msg}",
     "SHEET_SOURCE_MISSING": "Sheet source file missing: {msg}",
-    "SKELETON_UNREADABLE": "Failed to read skeleton save: {msg}"
+    "SKELETON_UNREADABLE": "Failed to read skeleton save: {msg}",
+    "REGISTRY_INVALID": "Invalid registry format: {msg}",
+    "REGISTRY_READ_FAILED": "Failed to read the registry: {msg}",
+    "REGISTRY_WRITE_FAILED": "Failed to write the registry: {msg}",
+    "REGISTRY_CONFLICT": "Concurrent registry write conflict (another process is modifying it; retry): {msg}",
+    "REGISTRY_PACK_NOT_FOUND": "Pack not found in the registry: {msg}",
+    "GIT_NOT_FOUND": "git not found on PATH: {msg}",
+    "GIT_COMMAND_FAILED": "git command failed: {msg}",
+    "GIT_NOT_A_REPO": "Current directory is not a git repository: {msg}",
+    "LFS_ATTRIBUTES_FAILED": "Failed to read or write .gitattributes: {msg}",
+    "LFS_NOT_INSTALLED": "git-lfs is not installed on this machine: {msg}",
+    "LFS_ENABLE_FAILED": "Failed to enable lfs: {msg}",
+    "VCS_ADD_FAILED": "git add failed: {msg}",
+    "VCS_COMMIT_FAILED": "git commit failed: {msg}",
+    "SIZE_SCAN_FAILED": "Failed to scan repository size: {msg}"
   },
   "common": {
     "yes": "Yes",

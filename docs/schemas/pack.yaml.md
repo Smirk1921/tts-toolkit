@@ -4,6 +4,8 @@
 >
 > 依据：`src/pack/packyaml.ts`（Run 1 实现，Run 2 未修改）、`src/pack/init.ts:548-553`。
 > 适用结构版本：`schema_version: 1`。本文档描述**已实现的真实契约**，不是设想稿。
+>
+> **B3 / Run 2（2026-10-05）修订 §4.3**：补 lfs 三态在 init 之后的变更入口（`tts vcs lfs status|enable|disable|migrate`，详见方案设计 §4.11.1）与三方一致性检查；补 init 三选一的**实际决策路径**（`decideLfs`）；修正初版对 `disabled` / `disabled-no-lfs` 下 `.gitattributes` 的描述（实现是不创建该文件）。字段表与其余小节未改动。
 
 ---
 
@@ -114,18 +116,64 @@ upload:
 
 取值域 `PACK_LFS_MODES`（`src/pack/packyaml.ts:53`），**没有默认值**，缺失即校验失败——强制 `tts pack init` 交互式三选一。三态各自代表"用户/系统当时怎么决定的"，三种都不是错误状态：
 
-| 取值 | 含义 | 谁做的决定 | `.gitattributes` | 后果 |
+| 取值 | 含义 | 何时出现 / 谁做的决定 | `.gitattributes` | 后果 |
 | --- | --- | --- | --- | --- |
-| `enabled` | 已装 git-lfs 且用户启用 | 用户显式启用（含"未装→选择现在装"） | 写入 lfs 规则 | 标准行为，大文件走 LFS |
-| `disabled` | **用户显式禁用** | 用户在二次确认后仍选择禁用 | 不写 lfs 规则（或注释掉） | 大文件直接入 git，仓库会膨胀；仅适合纯本地包 |
-| `disabled-no-lfs` | **系统未装 git-lfs，工具降级** | 系统缺依赖，用户选择跳过而非装 | 不写 lfs 规则，并加注释说明原因 | 行为同"禁用"，但 init 时多一条 warning；**不是用户主动禁用** |
+| `enabled` | 已装 git-lfs 且用户启用 | 显式 `--lfs enabled`；或探测到已装后 `git lfs install` 成功；或用户在菜单选"现在装"且装好后重跑 | 写入 7 条 lfs 规则（png/jpg/jpeg/gif/webp/obj/ttsmod） | 标准行为，大文件走 LFS |
+| `disabled` | **用户显式禁用** | 显式 `--lfs disabled`；或用户在三选一菜单选"跳过"并**通过二次确认**（输入 y/yes） | **不写 `.gitattributes`**（`src/pack/init.ts:557-560` 只在 enabled 时写） | 大文件直接入 git，仓库会膨胀；仅适合纯本地包 |
+| `disabled-no-lfs` | **系统未装 git-lfs，工具降级** | 非交互环境（`skipLfsPrompt` 或 `stdout` 非 TTY）自动降级；**不是用户主动禁用** | 同 `disabled`：不写该文件 | 行为同"禁用"，但 init 时多一条 warning（`src/pack/init.ts:477-478`、`:485-488`） |
 
-区分 `disabled` 与 `disabled-no-lfs` 的意义：事后排查"仓库为什么膨胀"时能分辨是用户选择还是环境缺失，也是将来"检测到 lfs 后提议重新启用"这一提示的触发依据（`disabled-no-lfs` 可提议，`disabled` 不该反复骚扰用户）。三态与 `.gitattributes` 的完整对照见 `方案设计.md:923-929`。
+> 修正（B3 / 2026-10-05）：初版此处写"不写 lfs 规则（或注释掉）/ 并加注释说明原因"，与实现不符——init 在 `disabled` / `disabled-no-lfs` 下**根本不创建** `.gitattributes`，没有任何注释行；lfs 规则只由 `enabled` 或 `tts vcs lfs enable` 写入。
+
+**init 时的实际决策路径**（`decideLfs`，`src/pack/init.ts:471-492`）：
+
+```text
+tts pack init 的 lfs 决策
+    ↓
+--lfs enabled|disabled 显式给出 ──────→ 直接采用（不探测、不安装）      :473-475
+    ↓ 未显式给出
+skipLfsPrompt（测试 / 非交互管道） ───→ disabled-no-lfs               :477-478
+    ↓
+检测 `git lfs version`（isGitLfsInstalled，:371-377）
+    ├── 能执行成功（已装） ──────────→ `git lfs install` → enabled    :481-484
+    └── 执行失败（未装）
+          ├── stdout 非 TTY ────────→ 打 warning，disabled-no-lfs     :485-488
+          └── TTY ──→ 三选一菜单（promptLfsChoice，:426-463）
+                       1) 现在装：再探一次；装了 → install → enabled；
+                          仍未装 → 打印安装指引并**中止**（skipped，不写 pack.yaml）
+                       2) 跳过（禁用）：需再次输入 y/yes 确认；
+                          否则视同取消（skipped）
+                       3) 取消：skipped
+```
+
+- `skipped` 分支**不写 pack.yaml**（`vcs.lfs` 必填且无默认值，不能猜），目录骨架与 git 仓库已建出，重跑 init 可续完；CLI 层把"未写出 pack.yaml"以退出码 1 标记（`src/cli/commands/pack.ts:259-263`）。
+- 设计 `方案设计.md:890` §4.11.1 还画了"安装但版本过老（< 2.0）→ 提示升级"分支；**当前实现没有版本号下限检查**——`isGitLfsInstalled` 只判断 `git lfs version` 能否执行成功（`src/pack/init.ts:367-377`）。这是已知的实现缺口，修订 schema 时不应照设计稿臆造该分支。
+
+**三态可在 init 之后变更**（阶段 2C 新增，命令完整语义见 `方案设计.md:890` §4.11.1）：
+
+- `tts vcs lfs status`：只读，打印三方事实（是否装 git-lfs 及版本、`.gitattributes` 是否含 lfs 规则、`pack.yaml` 的 `vcs.lfs`）并报告一致性（`src/cli/commands/vcs.ts:429`，复用 `inspectLfs`）；
+- `tts vcs lfs enable`：把 `.gitattributes` 缺失的 lfs 行补上（已有行不动），并把 `vcs.lfs` 写为 `enabled`（`src/vcs/lfs.ts:291`）；
+- `tts vcs lfs disable`：清空 `.gitattributes` 中含 `filter=lfs` 的行（其余行保留；清空后只剩空行 / 注释则整个文件删除），并把 `vcs.lfs` 写为 `disabled`（`src/vcs/lfs.ts:338`）——**`disableLfs` 自己不做二次确认**（该函数注释 `src/vcs/lfs.ts:329` 与模块头注释 `:21` 明示），确认在 CLI 层：交互环境要求输入 yes，非交互环境必须显式 `--yes`，否则拒绝执行（`src/cli/commands/vcs.ts` 的 `lfsDisableSub`）；
+- `disabled-no-lfs` **不会**由 disable 命令写出：它是 init 的非交互降级态，事后无法区分"当时没装"与"用户禁用"就只能靠这个取值；
+- `tts vcs lfs migrate` 只重写历史（`git lfs migrate import --everything`），**不改**本字段。
+
+区分 `disabled` 与 `disabled-no-lfs` 的意义：事后排查"仓库为什么膨胀"时能分辨是用户选择还是环境缺失，也是将来"检测到 lfs 后提议重新启用"这一提示的触发依据（`disabled-no-lfs` 可提议，`disabled` 不该反复骚扰用户）。三态与 `.gitattributes` 的完整对照见 `方案设计.md:933-939`。
+
+**三方一致性检查**（`inspectLfs`，`src/vcs/lfs.ts:243-272`；`tts vcs verify` 的 git 检查项复用同一实现）：
+
+| 事实组合 | 判定 |
+| --- | --- |
+| `vcs.lfs: enabled` 但 `.gitattributes` 无 lfs 规则 | 不一致——新提交的图片不会走 lfs。`tts vcs lfs status` 报 warning 并退 1；`tts vcs verify` 报 **error** `VCS_LFS_INCONSISTENT`（`src/vcs/verify.ts:145-150`） |
+| `vcs.lfs: disabled` 但 `.gitattributes` 仍含 lfs 规则 | 不一致——文件会继续被 lfs 改写。`tts vcs verify` 报 **warning** `VCS_LFS_INCONSISTENT`（`src/vcs/verify.ts:152-157`） |
+| `vcs.lfs: disabled-no-lfs` | 上述两项均**不适用**（"明确不用 lfs 且预期不装"，不参与 .gitattributes 对照） |
+| `.gitattributes` 声明 lfs 但本机没装 git-lfs | 图片无法正常 checkout。`tts vcs verify` 报 **error** `VCS_LFS_MISSING`；`tts vcs lfs status` 报 warning（`src/vcs/lfs.ts:255`、`src/vcs/verify.ts:138-143`） |
+| 三者一致 | `tts vcs lfs status` 打印 `cli.vcs.lfs.consistent` 并退 0 |
+
+`.registry.yaml` 条目的 `lfs_status` 是本字段的**冗余副本**（读索引不必逐包开 `pack.yaml`），两者不一致时**以本文件为准**；`registry.ts` 不做交叉校验，详见 `docs/schemas/registry.yaml.md` §6.4。
 
 ### 4.4 `host` 决定图床上传目标
 
-- 默认 `steamcloud`（`src/pack/packyaml.ts:128-130`，与 `方案设计.md:1524` 的"默认 steamcloud（用户已定）"一致）。
-- 阶段 3 的 `tts assets upload` 按此字段选择 `ImageHost` 实现：素材改动后把新文件传到对应图床，拿回 URL 再写回存档（`方案设计.md:655`）。
+- 默认 `steamcloud`（`src/pack/packyaml.ts:128-130`，与 `方案设计.md:1532` §6.5 的"默认 `steamcloud`（用户已定）"一致）。
+- 阶段 3 的 `tts assets upload` 按此字段选择 `ImageHost` 实现：素材改动后把新文件传到对应图床，拿回 URL 再写回存档（`方案设计.md:663`）。
 - **`pack.yaml` 的 `host` 与 `assets.yaml` 的 `assets[].host` 是两回事**：前者是"这个包以后往哪传"的策略，后者是"这一条素材现在挂在哪个图床"的事实，历史素材可能来自不同图床。死链迁移按条目上的 `host` 走，不要用包级 `host` 覆盖判断。
 
 ### 4.5 `editor.adapter` 可扩展
@@ -152,3 +200,5 @@ upload:
 | 日期 | 变更 |
 | --- | --- |
 | 2026-10-04 | 初版（窗口 B1 / Run 2 模板化）。契约来自 `src/pack/packyaml.ts`，Run 2 未修改该模块。 |
+| 2026-10-05 | B3 / Run 2 修订 §4.3：三态可在 init 后经 `tts vcs lfs status\|enable\|disable` 变更、三方一致性检查（`inspectLfs` / `vcs verify` 的错误码与 severity）、`lfs_status` 冗余副本指向 `docs/schemas/registry.yaml.md`；修正 `.gitattributes` 在 `disabled` / `disabled-no-lfs` 下的描述。 |
+| 2026-10-05 | B3 / Run 2 核验修订 §4.3：补 init 实际决策路径图（`decideLfs`，含 `skipped` 中止分支）；明确设计 §4.11.1 的"版本过老"分支当前**未实现**；补 `tts vcs lfs status`；引用行号校正（init.ts、方案设计.md），并校正 §4.4 两处失效的设计行号引用（1524→1532、655→663）。 |

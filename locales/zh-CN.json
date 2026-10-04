@@ -81,6 +81,31 @@
             "name": "图包名",
             "out": "输出目录（默认 ./packs/<name>）"
           }
+        },
+        "list": {
+          "description": "列出所有已注册图包",
+          "option": {
+            "root": "图包索引根目录（默认当前目录）",
+            "dirty": "只显示有未提交改动的"
+          }
+        },
+        "status": {
+          "description": "显示单个图包的详细信息",
+          "argument": {
+            "dir": "图包子目录名"
+          },
+          "option": {
+            "root": "图包索引根目录（默认当前目录）"
+          }
+        },
+        "open": {
+          "description": "用系统文件管理器打开图包目录",
+          "argument": {
+            "dir": "图包子目录名"
+          },
+          "option": {
+            "root": "图包索引根目录（默认当前目录）"
+          }
         }
       },
       "deck": {
@@ -130,6 +155,68 @@
             "root": "图包根目录",
             "cmyk": "跳过 CMYK 色彩空间检查",
             "atlasSize": "跳过图集尺寸与网格一致性检查"
+          }
+        }
+      },
+      "vcs": {
+        "description": "版本控制语义封装（git + lfs）",
+        "status": {
+          "description": "用图包语言显示工作区状态",
+          "option": {
+            "root": "图包根目录（默认当前目录）",
+            "conflicts": "同时显示合并冲突的语义化报告"
+          }
+        },
+        "commit": {
+          "description": "自动生成中文 commit message 并提交",
+          "option": {
+            "root": "图包根目录（默认当前目录）",
+            "message": "用户自定义 message（将拼在自动摘要前）",
+            "dryRun": "只生成 message，不实际提交",
+            "noAdd": "不自动 git add -A（只提交已暂存内容）"
+          }
+        },
+        "verify": {
+          "description": "工作区 + git 状态校验（合并后必跑）",
+          "option": {
+            "root": "图包根目录（默认当前目录）",
+            "skipCmyk": "跳过 CMYK 色彩模式检查（快）",
+            "skipAtlas": "跳过图集尺寸检查（快）",
+            "skipGit": "跳过 git 状态检查"
+          }
+        },
+        "size": {
+          "description": "报告仓库各部分体积",
+          "option": {
+            "root": "图包根目录（默认当前目录）"
+          }
+        },
+        "lfs": {
+          "description": "git-lfs 状态管理",
+          "status": {
+            "description": "查看 lfs 三方一致性",
+            "option": {
+              "root": "图包根目录"
+            }
+          },
+          "enable": {
+            "description": "启用 lfs（写 .gitattributes + pack.yaml）",
+            "option": {
+              "root": "图包根目录"
+            }
+          },
+          "disable": {
+            "description": "禁用 lfs（清空 .gitattributes 的 lfs 规则）",
+            "option": {
+              "root": "图包根目录",
+              "yes": "跳过二次确认（脚本场景）"
+            }
+          },
+          "migrate": {
+            "description": "把已提交的二进制迁移到 lfs（git lfs migrate import）",
+            "option": {
+              "root": "图包根目录"
+            }
           }
         }
       },
@@ -206,6 +293,17 @@
       },
       "unpack": {
         "done": "已从 {save} 解包到 {outDir}：{scripts} 脚本，{ui} UI，{objects} 对象"
+      },
+      "list": {
+        "empty": "当前目录下没有已注册的图包（.registry.yaml 为空或不存在）",
+        "header": "已注册图包（{count} 个）："
+      },
+      "status": {
+        "notFound": "未在 .registry.yaml 中找到图包 {dir}"
+      },
+      "open": {
+        "notFound": "未在 .registry.yaml 中找到图包 {dir}",
+        "done": "已打开 {path}"
       }
     },
     "deck": {
@@ -235,6 +333,43 @@
         "summary": "校验发现 {errors} 错 {warnings} 警"
       },
       "invalidNumber": "{option} 需要正整数（收到 {value}）"
+    },
+    "vcs": {
+      "status": {
+        "clean": "工作区干净，无未提交改动",
+        "unknownNote": "另有 {count} 个改动无法语义化（见上方 unknown 行）",
+        "conflictsHeader": "发现 {count} 个合并冲突：",
+        "cardsCsvWarning": "⚠️  cards.csv 本身冲突，请先解决（否则卡牌反查不可用）"
+      },
+      "commit": {
+        "clean": "工作区干净，无需提交",
+        "dryRunMessage": "将使用的 commit message：\n{message}",
+        "done": "已提交 {hash}：{message}"
+      },
+      "verify": {
+        "summary": "校验完成：{errors} 错误，{warnings} 警告"
+      },
+      "size": {
+        "workspace": "工作区体积：{bytes}",
+        "git": ".git 体积：{bytes}",
+        "lfsObjects": ".git/lfs/objects 体积：{bytes}",
+        "breakdownHeader": "按目录分解："
+      },
+      "lfs": {
+        "installed": "git-lfs 已安装（版本 {version}）",
+        "notInstalled": "git-lfs 未安装",
+        "attributesHasLfs": ".gitattributes 含 lfs 规则：{yes}",
+        "packYamlLfs": "pack.yaml 的 vcs.lfs：{mode}",
+        "consistent": "三方一致（lfs 状态正常）",
+        "enableDone": "lfs 已启用（.gitattributes + pack.yaml 已写）",
+        "alreadyEnabled": "lfs 已是启用状态，无需变更",
+        "disableWarning": "⚠️  禁用 git-lfs 后：\n   - 每次修改一张卡图，git 都会存一整份新副本\n   - 一个图包改 10 轮，仓库可能膨胀到几十 GB\n   - 推送到远端会非常慢，某些托管商可能拒绝（GitHub 单文件 100MB 上限）",
+        "disableConfirm": "确认禁用？此操作建议仅用于「纯本地、不打算推远端」的场景。\n输入 yes 确认：",
+        "disableCancelled": "已取消",
+        "disableNeedsYes": "非交互环境必须显式传 --yes 确认禁用",
+        "disableDone": "lfs 已禁用（.gitattributes 的 lfs 规则已清空，pack.yaml 已写为 disabled）",
+        "migrateDone": "lfs 历史迁移完成：\n{output}"
+      }
     },
     "pull": {
       "done": "拉取完成：脚本 {scripts} 个，UI 界面 {ui} 个",
@@ -463,7 +598,21 @@
     "PARENT_CHILD_DECK_MISMATCH": "父牌堆与子对象的 CustomDeck 不一致：{msg}",
     "SHARED_ATLAS_NOT_DECLARED": "共享图集未在 deck.yaml 声明：{msg}",
     "SHEET_SOURCE_MISSING": "图集源文件缺失：{msg}",
-    "SKELETON_UNREADABLE": "骨架存档读取失败：{msg}"
+    "SKELETON_UNREADABLE": "骨架存档读取失败：{msg}",
+    "REGISTRY_INVALID": "注册表格式非法：{msg}",
+    "REGISTRY_READ_FAILED": "注册表读取失败：{msg}",
+    "REGISTRY_WRITE_FAILED": "注册表写入失败：{msg}",
+    "REGISTRY_CONFLICT": "注册表并发写冲突（另一进程正在修改，请重试）：{msg}",
+    "REGISTRY_PACK_NOT_FOUND": "注册表中找不到图包：{msg}",
+    "GIT_NOT_FOUND": "未在 PATH 中找到 git：{msg}",
+    "GIT_COMMAND_FAILED": "git 命令执行失败：{msg}",
+    "GIT_NOT_A_REPO": "当前目录不是 git 仓库：{msg}",
+    "LFS_ATTRIBUTES_FAILED": ".gitattributes 读写失败：{msg}",
+    "LFS_NOT_INSTALLED": "本机未安装 git-lfs：{msg}",
+    "LFS_ENABLE_FAILED": "lfs 启用失败：{msg}",
+    "VCS_ADD_FAILED": "git add 失败：{msg}",
+    "VCS_COMMIT_FAILED": "git commit 失败：{msg}",
+    "SIZE_SCAN_FAILED": "仓库体积扫描失败：{msg}"
   },
   "common": {
     "yes": "是",

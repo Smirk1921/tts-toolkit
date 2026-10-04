@@ -9,6 +9,9 @@
  * - `tts pack push`          列出将推回游戏的清单（collectPushItems，骨架实现）
  * - `tts pack diff`          工作区 ↔ 游戏差异（diffWorkspace，只读）
  * - `tts pack build`         合成 TTS 可加载的存档 JSON（buildSave，含 --dry-run）
+ * - `tts pack list`          列出 .registry.yaml 里注册的全部图包（readRegistry）
+ * - `tts pack status <dir>`  单个注册图包的详细信息（findPack）
+ * - `tts pack open <dir>`    用系统文件管理器打开图包目录（findPack + explorer）
  *
  * 边界（重要，不要越界）：
  * - 本文件**不直接 import src/session/ 或 src/protocol/**：需要 TTS 会话的子命令由
@@ -21,9 +24,14 @@
  *   统一走 `error.unknown`，两者都以退出码 1 结束。与 src/cli/with-server.ts 的
  *   reportError 分工不同：pack 模块抛的是带机器可读 code 的 PackError，
  *   不需要按 message 文本猜分类。
+ * - list / status / open 三个子命令属于阶段 2C 的多图包索引层：只读 .registry.yaml
+ *   （src/pack/registry.ts），不改任何条目；`pack open` 在 Windows 上调 explorer
+ *   打开目录（非 Windows 只打印绝对路径）。
  *
  * 输出约定：每个子命令只在成功时向 stdout 打一行中文摘要（经 t()）；push / diff 的
- * 清单行是纯数据（guid / 名字 / 路径），不承载文案，故不翻译。
+ * 清单行是纯数据（guid / 名字 / 路径），不承载文案，故不翻译。list / status 的表格行
+ * 同理：字段名（dir / kind / stats / upstream.* 等）是契约里的机器可读键，按原样输出，
+ * 只把 notFound / empty / done 这类界面文案走 t()。
  *
  * 本模块使用的 i18n 键（locales/*.json 由本地化步骤补齐；缺键时 t() 原样输出键名）：
  * - 静态：`cli.command.pack.*`（已存在）、`cli.pack.init.done` {dir}、
@@ -31,15 +39,21 @@
  *   `cli.pack.pull.done` {scripts} {ui} {skipped}、`cli.pack.push.note`、
  *   `cli.pack.diff.summary` {added} {modified} {deleted}、`cli.pack.build.done`
  *   {outPath} {scripts} {ui} {objects}、`cli.pack.build.dryRunNote`、
- *   `error.unknown` {msg}；
+ *   `cli.pack.list.empty`、`cli.pack.list.header` {count}、
+ *   `cli.pack.status.notFound` {dir}、`cli.pack.open.notFound` {dir}、
+ *   `cli.pack.open.done` {path}、`error.unknown` {msg}；
  * - 动态（键 = `error.` + PackError.code，占位符 {msg}）：PACK_NOT_FOUND /
  *   PACK_INVALID / PACK_READ_FAILED / PACK_EXISTS / GIT_INIT_FAILED /
  *   GIT_LFS_INSTALL_FAILED / TTSMOD_INVALID / SAVE_INVALID / UNPACK_FAILED /
  *   PULL_FAILED / PUSH_FAILED / DIFF_FAILED / SKELETON_MISSING / SKELETON_INVALID /
- *   PACK_WRITE_FAILED / BUILD_FAILED 等（各模块错误码的完整取值见其模块头注释）。
+ *   PACK_WRITE_FAILED / BUILD_FAILED / REGISTRY_INVALID / REGISTRY_READ_FAILED /
+ *   REGISTRY_CONFLICT 等（各模块错误码的完整取值见其模块头注释）。
  */
 
+import path from "node:path";
+
 import { Command } from "commander";
+import { execa } from "execa";
 
 import { t } from "../../i18n/index.js";
 import { buildSave } from "../../pack/build.js";
@@ -48,7 +62,9 @@ import { initPack } from "../../pack/init.js";
 import { PackError } from "../../pack/packyaml.js";
 import { pullFromGame } from "../../pack/pull.js";
 import { collectPushItems, type PushItem } from "../../pack/push.js";
+import { findPack, readRegistry, type PackEntry } from "../../pack/registry.js";
 import { unpackSave } from "../../pack/unpack.js";
+import { statusPorcelain } from "../../vcs/git.js";
 
 // ---------------------------------------------------------------------------
 // 选项类型
@@ -84,6 +100,18 @@ interface PackBuildOptions extends PackRootOptions {
   dryRun?: boolean;
   /** 输出 JSON 路径（缺省 `<root>/dist/<净化(pack.yaml name)>.json`） */
   out?: string;
+}
+
+/** `tts pack list` 的选项 */
+interface PackListOptions extends PackRootOptions {
+  /** 只显示有未提交改动的图包（无法判定 git 状态的条目视为不脏，不显示） */
+  dirty: boolean;
+}
+
+/** pack list 的一行：注册表条目 + 实测的 git 脏标志（null = 无法判定，如不是 git 仓库） */
+interface PackListRow {
+  entry: PackEntry;
+  dirty: boolean | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +180,60 @@ function defaultUnpackOutDir(name: string | undefined): string {
 function formatPushItem(item: PushItem): string {
   const files = [item.scriptPath, item.uiPath].filter((file): file is string => file !== undefined);
   return `  ${item.guid}  ${item.name}  ${files.join("  ")}`;
+}
+
+/**
+ * 探测单个注册图包的 git 脏状态（`pack list` 的 dirty 列）。
+ *
+ * 单个包探测失败（不是 git 仓库 / git 不在 PATH / 目录被删）不影响整张列表：
+ * 返回 null，呈现为 "?"，`--dirty` 过滤时按"不脏"处理（宁可不显示，也不误报有改动）。
+ *
+ * @param packsRoot 图包索引根目录（`--root`）
+ * @param entry 注册表条目（dir 是相对 packsRoot 的一级子目录名）
+ * @returns 有未提交改动 true / 干净 false / 无法判定 null
+ */
+async function probeDirty(packsRoot: string, entry: PackEntry): Promise<boolean | null> {
+  try {
+    return (await statusPorcelain(path.resolve(packsRoot, entry.dir))).length > 0;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * git 脏标志的表格呈现：true / false / "?"（无法判定）。布尔字面量是纯数据不翻译。
+ * @param dirty probeDirty 的结果
+ * @returns 单元格文本
+ */
+function formatDirtyFlag(dirty: boolean | null): string {
+  return dirty === null ? "?" : String(dirty);
+}
+
+/**
+ * 把一条注册表条目渲染成多行纯数据文本（字段名即契约键，不翻译；嵌套块用 "块.字段"）。
+ *
+ * @param entry findPack / readRegistry 产出的条目
+ * @returns 每行一条的文本列表（upstream 为 null 时只有一行 "upstream: -"）
+ */
+function formatPackEntry(entry: PackEntry): string[] {
+  const lines = [
+    `dir: ${entry.dir}`,
+    `name: ${entry.name}`,
+    `kind: ${entry.kind}`,
+    `branch: ${entry.branch}`,
+    `host: ${entry.host}`,
+    `modified: ${entry.modified}`,
+    `lfs_status: ${entry.lfs_status}`,
+    `stats: decks=${entry.stats.decks} cards=${entry.stats.cards} scripts=${entry.stats.scripts}`,
+  ];
+  if (entry.upstream === null) {
+    lines.push("upstream: -");
+  } else {
+    lines.push(`upstream.workshop_id: ${entry.upstream.workshop_id}`);
+    lines.push(`upstream.last_synced: ${entry.upstream.last_synced}`);
+    lines.push(`upstream.local_commit: ${entry.upstream.local_commit}`);
+  }
+  return lines;
 }
 
 // ---------------------------------------------------------------------------
@@ -330,10 +412,105 @@ const buildSub = new Command("build")
   });
 
 // ---------------------------------------------------------------------------
+// 子命令：多图包索引（list / status / open，阶段 2C）
+// ---------------------------------------------------------------------------
+
+/**
+ * `tts pack list`：列出 `.registry.yaml` 里注册的全部图包（readRegistry）。
+ *
+ * 表格列：dir / name / branch / dirty / lfs_status。dirty 是**实测**值（逐包跑
+ * statusPorcelain，经 src/vcs/git.ts），不是注册表里的 modified 日期；探测失败的
+ * 包显示 "?"，`--dirty` 时被过滤掉。注册表不存在时 readRegistry 容错返回空表，
+ * 这里按"没有已注册图包"提示并以 0 退出。
+ */
+const listSub = new Command("list")
+  .description(t("cli.command.pack.list.description"))
+  .option("--root <dir>", t("cli.command.pack.list.option.root"), ".")
+  .option("--dirty", t("cli.command.pack.list.option.dirty"), false)
+  .action(async (opts: PackListOptions) => {
+    try {
+      const registry = await readRegistry(opts.root);
+      if (registry.packs.length === 0) {
+        console.log(t("cli.pack.list.empty"));
+        return;
+      }
+      const rows: PackListRow[] = [];
+      for (const entry of registry.packs) {
+        rows.push({ entry, dirty: await probeDirty(opts.root, entry) });
+      }
+      const shown = opts.dirty ? rows.filter((row) => row.dirty === true) : rows;
+      console.log(t("cli.pack.list.header", { count: shown.length }));
+      for (const row of shown) {
+        console.log(
+          `  ${row.entry.dir}  ${row.entry.name}  ${row.entry.branch}  ${formatDirtyFlag(row.dirty)}  ${row.entry.lfs_status}`,
+        );
+      }
+    } catch (err) {
+      process.exit(reportPackError(err));
+    }
+  });
+
+/**
+ * `tts pack status <dir>`：显示单个注册图包的详细信息（findPack）。
+ *
+ * 输出条目的全部字段（dir / name / kind / branch / host / modified / lfs_status /
+ * stats，以及 upstream 展开的 workshop_id / last_synced / local_commit）——字段名即
+ * `.registry.yaml` 的契约键，纯数据不翻译。找不到 dir 时只写 stderr 并以退出码 1 结束
+ * （不是 PackError，findPack 对"找不到"返回 null）。
+ */
+const packStatusSub = new Command("status")
+  .description(t("cli.command.pack.status.description"))
+  .argument("<dir>", t("cli.command.pack.status.argument.dir"))
+  .option("--root <dir>", t("cli.command.pack.status.option.root"), ".")
+  .action(async (dir: string, opts: PackRootOptions) => {
+    try {
+      const entry = await findPack(opts.root, dir);
+      if (entry === null) {
+        console.error(t("cli.pack.status.notFound", { dir }));
+        process.exit(1);
+      }
+      for (const line of formatPackEntry(entry)) {
+        console.log(line);
+      }
+    } catch (err) {
+      process.exit(reportPackError(err));
+    }
+  });
+
+/**
+ * `tts pack open <dir>`：用系统文件管理器打开图包目录（findPack + explorer）。
+ *
+ * Windows 上经 execa 调 `explorer <绝对路径>`（explorer.exe 成功时也可能返回非 0，
+ * 故 reject: false 忽略退出码——打不开时由资源管理器自己提示）；其他平台只把绝对
+ * 路径打出来，由用户自行打开，绝不猜测平台专属的打开命令。无论哪种情况都以
+ * `cli.pack.open.done` {path} 收尾，脚本可以从中取路径。
+ */
+const openSub = new Command("open")
+  .description(t("cli.command.pack.open.description"))
+  .argument("<dir>", t("cli.command.pack.open.argument.dir"))
+  .option("--root <dir>", t("cli.command.pack.open.option.root"), ".")
+  .action(async (dir: string, opts: PackRootOptions) => {
+    try {
+      const entry = await findPack(opts.root, dir);
+      if (entry === null) {
+        console.error(t("cli.pack.open.notFound", { dir }));
+        process.exit(1);
+      }
+      const absolutePath = path.resolve(opts.root, entry.dir);
+      if (process.platform === "win32") {
+        await execa("explorer", [absolutePath], { reject: false });
+      }
+      console.log(t("cli.pack.open.done", { path: absolutePath }));
+    } catch (err) {
+      process.exit(reportPackError(err));
+    }
+  });
+
+// ---------------------------------------------------------------------------
 // 主命令
 // ---------------------------------------------------------------------------
 
-/** `tts pack` 主命令：6 个子命令在上方定义后统一挂载（薄分发层，无自身 action） */
+/** `tts pack` 主命令：9 个子命令在上方定义后统一挂载（薄分发层，无自身 action） */
 export const packCommand: Command = new Command("pack").description(t("cli.command.pack.description"));
 
 packCommand.addCommand(initSub);
@@ -342,3 +519,6 @@ packCommand.addCommand(pullSub);
 packCommand.addCommand(pushSub);
 packCommand.addCommand(diffSub);
 packCommand.addCommand(buildSub);
+packCommand.addCommand(listSub);
+packCommand.addCommand(packStatusSub);
+packCommand.addCommand(openSub);

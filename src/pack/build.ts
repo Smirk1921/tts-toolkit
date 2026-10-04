@@ -220,10 +220,14 @@ const skeletonSchema = z.object(
 
 /**
  * 工作区 data.json 的最小结构校验（定位只需要 GUID；其余字段原样保留参与替换）。
+ *
+ * GUID 允许空串：工坊原包（.ttsmod 直接解出来的存档）里未在游戏内保存过的
+ * 对象 GUID 是空字符串，这是合法状态（unpack 会照样落盘）。build 时这种对象
+ * 不会出现在骨架索引里，整体走"未改对象透传"路径，不会触发 GUID_MISMATCH。
  */
 const workspaceDataSchema = z.object(
   {
-    GUID: z.string({ error: "data.json 的 GUID 必须是字符串" }).min(1, "data.json 的 GUID 不能为空"),
+    GUID: z.string({ error: "data.json 的 GUID 必须是字符串" }),
   },
   { error: "data.json 必须是键值对象" },
 );
@@ -392,6 +396,11 @@ async function indexObjectDirs(ctx: BuildContext, kind: "objects" | "decks"): Pr
       continue;
     }
     const guid = parsed.data.GUID;
+    if (guid === "") {
+      // 空 GUID 是工坊原包的合法状态（未在游戏内保存过的对象）。这种对象
+      // 不会出现在骨架索引里，整体走"未改对象透传"路径；不建索引、不告警。
+      continue;
+    }
     if (ctx.objectIndex.has(guid)) {
       ctx.warnings.push(t("cli.pack.build.warnDataDuplicate", { guid, path: dataFile }));
       continue; // 先到先得，保持确定性

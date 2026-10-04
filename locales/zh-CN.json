@@ -216,6 +216,7 @@
     "jsonParse": "JSON 解析失败：{detail}",
     "invalidDatadir": "TTS 数据目录无效：{path}",
     "generic": "操作失败：{message}",
+    "unknown": "未知错误：{msg}",
     "PACK_NOT_FOUND": "未找到图包工作区：{msg}",
     "PACK_INVALID": "pack.yaml 校验失败：{msg}",
     "PACK_EXISTS": "目录已是图包工作区：{msg}",

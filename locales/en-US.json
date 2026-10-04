@@ -216,6 +216,7 @@
     "jsonParse": "JSON parse failed: {detail}",
     "invalidDatadir": "Invalid TTS data directory: {path}",
     "generic": "Operation failed: {message}",
+    "unknown": "Unknown error: {msg}",
     "PACK_NOT_FOUND": "Pack workspace not found: {msg}",
     "PACK_INVALID": "pack.yaml validation failed: {msg}",
     "PACK_EXISTS": "Directory is already a pack workspace: {msg}",

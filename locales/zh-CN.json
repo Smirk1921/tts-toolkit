@@ -567,9 +567,56 @@
       "duplicateId": "objects.csv 存在重复 asset_id：{path}（{assetId}）",
       "writeFailed": "objects.csv 写入失败：{path}（{detail}）"
     },
+    "host": {
+      "notFound": "未找到图床 {id}：用 tts host list 查看可用图床（内置默认 steamcloud，其余需在配置文件或插件目录声明）",
+      "invalidInput": "上传入参无效：{detail}",
+      "configInvalid": "图床 {name} 的配置无效：{detail}",
+      "configReadFailed": "图床配置文件读取失败：{path}（{detail}）",
+      "pluginLoadFailed": "图床插件加载失败：{path}（{detail}）",
+      "pluginInvalid": "图床插件无效：{path}（{detail}）",
+      "uploadFailed": "图床 {host} 上传 {file} 失败：{detail}",
+      "noUrlInOutput": "上传命令没有在 stdout 输出任何 http(s) URL：{file}（stdout：{stdout}）",
+      "commandNonZero": "命令退出码非 0（{code}），stderr：{stderr}",
+      "commandTimeout": "命令超时（{seconds} 秒），已被终止",
+      "commandAborted": "命令已被中止",
+      "commandSpawnFailed": "无法启动命令：{detail}",
+      "stderrEmpty": "（无 stderr 输出）",
+      "duplicateId": "图床 id 重复：{id}（先由 {first} 提供，冲突来源 {second}）",
+      "reservedId": "{name} 是内置默认图床的名字，请在配置或插件里改用其他名称",
+      "checkNotLocal": "local 图床只能检测 file:// URL 或本地路径，收到：{url}",
+      "localFileMissing": "本地文件不存在：{path}",
+      "fileTooLarge": "文件 {file} 超过图床大小上限：{size} 字节（上限 {max} 字节）",
+      "probeUnavailable": "未取得探测结果：{url}",
+      "httpStatusDead": "HTTP 状态码 {status}（非 2xx 视为不存活）",
+      "config": {
+        "notObject": "hosts 必须是键值对象",
+        "rootNotObject": "配置文件根节点必须是键值对象",
+        "emptyName": "图床名不能为空字符串",
+        "missingCommand": "type 为 command 时必须提供 command 模板",
+        "missingS3Fields": "type 为 s3 时缺少必填字段：{fields}",
+        "missingLocalDir": "type 为 local 时必须提供 dir（图床的输出目录）",
+        "invalidEndpoint": "endpoint 必须是 http(s) URL：{value}"
+      }
+    },
+    "assets": {
+      "fetchInvalid": "素材下载入参无效：{detail}",
+      "invalidUrl": "URL 无效：{detail}",
+      "invalidExt": "扩展名无效：{detail}",
+      "urlAllStripped": "URL 去掉非字母数字字符后为空，无法作为缓存文件名",
+      "migrateInvalid": "素材迁移入参无效：{detail}",
+      "migrateRoot": "存档根对象无效：{detail}",
+      "migrateMapping": "URL 映射无效：{detail}",
+      "migrateMappingKind": "必须是 Map 或纯对象（字符串 → 字符串）",
+      "presetInvalid": "离线预置入参无效：{detail}",
+      "presetWriteFailed": "离线预置目录创建失败：{detail}"
+    },
     "ASSETS_INVALID": "assets.yaml 校验失败：{msg}",
     "ASSETS_READ_FAILED": "assets.yaml 读取失败：{msg}",
     "ASSETS_WRITE_FAILED": "assets.yaml 写入失败：{msg}",
+    "ASSETS_FETCH_INVALID": "素材下载入参无效：{msg}",
+    "ASSETS_MIGRATE_INVALID": "素材迁移入参无效：{msg}",
+    "ASSETS_PRESET_INVALID": "离线预置入参无效：{msg}",
+    "ASSETS_PRESET_WRITE_FAILED": "离线预置写入失败：{msg}",
     "BUILD_FAILED": "构建图包失败：{msg}",
     "DECK_INVALID": "deck.yaml 校验失败：{msg}",
     "DECK_NOT_FOUND": "未找到 deck.yaml：{msg}",
@@ -612,7 +659,142 @@
     "LFS_ENABLE_FAILED": "lfs 启用失败：{msg}",
     "VCS_ADD_FAILED": "git add 失败：{msg}",
     "VCS_COMMIT_FAILED": "git commit 失败：{msg}",
-    "SIZE_SCAN_FAILED": "仓库体积扫描失败：{msg}"
+    "SIZE_SCAN_FAILED": "仓库体积扫描失败：{msg}",
+    "HOST_NOT_FOUND": "图床操作失败：{msg}",
+    "HOST_CONFIG_INVALID": "图床配置无效：{msg}",
+    "HOST_PLUGIN_LOAD_FAILED": "图床插件加载失败：{msg}",
+    "HOST_PLUGIN_INVALID": "图床插件无效：{msg}",
+    "HOST_INVALID_INPUT": "图床上传入参无效：{msg}",
+    "HOST_UPLOAD_FAILED": "图床上传失败：{msg}",
+    "archive": {
+      "inputMissing": "未找到 .ttsmod 文件：{path}",
+      "notZip": "不是有效的 ZIP 文件（.ttsmod 应为 ZIP）：{path}",
+      "corrupt": "ZIP 结构损坏或条目无法解压：{detail}",
+      "exportWriteFailed": ".ttsmod 写入失败：{path}（{detail}）",
+      "strictMissing": "素材不全（strict 模式）：{count} 条素材缺失或扩展名推导失败，已中止打包、未产出 .ttsmod：\n{list}"
+    }
+  },
+  "host": {
+    "steamcloud": {
+      "pendingHint": "已备好 {count} 个待上传文件：暂存目录 {stagingDir}；清单 {manifestPath}。请在游戏内打开 Cloud Manager → Upload All 一键上传（这是可接受的人工步骤，不是失败）；上传完成后游戏会自动重写存档里的 URL，无需手动回写。",
+      "manifestHint": "Steam Cloud 待上传清单：共 {count} 个文件，请在游戏内 Cloud Manager → Upload All 上传；完成后游戏会自动重写存档里的 URL。"
+    }
+  },
+  "assets": {
+    "fetch": {
+      "category": {
+        "ok": "正常",
+        "migratable": "可迁移",
+        "dead": "死链",
+        "manual": "需人工处理"
+      },
+      "kind": {
+        "plain": "普通 HTTP(S)",
+        "steamCloud": "Steam Cloud（老域名）",
+        "gdrive": "Google Drive",
+        "dropbox": "Dropbox",
+        "paste": "粘贴板站点（paste.ee / pastebin / gist）",
+        "imgur": "Imgur",
+        "localFile": "本地路径（file:）",
+        "langVariant": "语言变体（值内含语言分段）",
+        "unknown": "无法识别"
+      },
+      "fix": {
+        "addProtocol": "补全 https:// 协议",
+        "convertDirect": "分享链接转直链",
+        "migrateDomain": "迁移域名（cloud-*.steamusercontent.com → steamusercontent-a.akamaihd.net）",
+        "reupload": "重新上传素材并替换 URL",
+        "manualReview": "人工确认后处理"
+      },
+      "manualReason": {
+        "localFile": "file: 本地路径指向原作者的机器，无法下载，他人加载会看不到该素材，需重新上传",
+        "langVariant": "语言变体 URL（值内含语言分段）不做自动处理，请人工确认",
+        "unknownKind": "无法识别的 URL 形态，工具不做自动处理",
+        "gdriveNotFile": "Google Drive 链接不是文件（可能是文件夹），无法转直链"
+      },
+      "httpError": "HTTP 状态码 {status}（非 2xx）",
+      "migratedAlive": "原地址已失效（{reason}），但迁移到 Akamai 域名后可用，建议改写",
+      "gdriveHtml": "Google Drive 返回的是网页而非文件（可能是大文件病毒扫描确认页），需人工处理",
+      "netError": {
+        "timeout": "请求超时（超过 {ms}ms 无响应）",
+        "tooManyRedirects": "重定向次数超过上限（{max}）",
+        "oversized": "响应体超过大小上限（{max} 字节）",
+        "ENOTFOUND": "域名解析失败",
+        "EAI_AGAIN": "域名解析暂时失败",
+        "ECONNREFUSED": "连接被拒绝",
+        "ECONNRESET": "连接被重置",
+        "ETIMEDOUT": "连接超时",
+        "EHOSTUNREACH": "目标主机不可达",
+        "ENETUNREACH": "网络不可达",
+        "CERT_HAS_EXPIRED": "TLS 证书已过期",
+        "ERR_INVALID_URL": "URL 格式非法",
+        "UND_ERR_CONNECT_TIMEOUT": "建立连接超时",
+        "UND_ERR_HEADERS_TIMEOUT": "等待响应头超时",
+        "UND_ERR_BODY_TIMEOUT": "读取响应体超时",
+        "UND_ERR_SOCKET": "连接异常中断",
+        "UND_ERR_CLOSED": "连接已被关闭",
+        "UND_ERR_DESTROYED": "连接已被销毁",
+        "UND_ERR_PRX_TLS": "代理 TLS 握手失败",
+        "UND_ERR_RESPONSE": "响应异常",
+        "unknown": "请求失败：{message}"
+      }
+    },
+    "migrate": {
+      "extUnknown": "无法确定文件扩展名（URL 路径与 Content-Type 都未提供线索），请用 ext 显式指定",
+      "writeFailed": "写入缓存文件失败：{detail}",
+      "presetSummary": "离线预置完成：写入 {written} / 失败 {failed} / 跳过 {skipped}",
+      "migrationSummary": "URL 迁移完成：改写 {rewritten} 处 / 共访问 {visited} 处 / 本地路径 {localFiles} 处"
+    }
+  },
+  "archive": {
+    "kind": {
+      "image": "图片",
+      "model": "模型",
+      "assetbundle": "资源包",
+      "pdf": "PDF",
+      "audio": "音频"
+    },
+    "detect": {
+      "unresolvedSummary": "以下 {count} 条素材的扩展名三级兜底（URL 路径 → 本地缓存目录 → HTTP Content-Type）全部失败：",
+      "unresolvedItem": "  - [{kind}] {url}"
+    },
+    "export": {
+      "skippedSummary": "有 {count} 条素材未能打包，已跳过（缺失素材默认跳过是原工具行为，可用 --strict 改为报错）：",
+      "skippedMissing": "  - 缺少本地文件：[{kind}] {url}",
+      "skippedExt": "  - 扩展名推导失败：[{kind}] {url}",
+      "duplicateEntry": "条目 {entry} 重复，只保留第一条"
+    },
+    "import": {
+      "skippedExistingSummary": "{count} 个文件已存在，按约定不覆盖：",
+      "skippedExistingItem": "  - {path}",
+      "unsafeEntrySkipped": "跳过不安全的包内条目（路径逃逸）：{name}",
+      "manifestInvalid": "manifest.json 不是合法 JSON，已忽略：{name}"
+    },
+    "readme": {
+      "sectionZh": "—— 中文说明 ——",
+      "sectionEn": "—— English ——",
+      "title": "图包说明：{packName}",
+      "generatedBy": "本包由 {tool} v{version} 制作。",
+      "createdAt": "打包时间：{time}（ISO 8601，UTC）",
+      "packVersion": "图包版本：{version}",
+      "sourceWorkshop": "来源创意工坊 ID：{id}",
+      "sourceWorkshopNone": "来源创意工坊 ID：无（未发布）",
+      "sourceMod": "上游模组 ID：{id}",
+      "contents": "包含素材：",
+      "saveNote": "本包是存档备份：解压后存档出现在 TTS 的存档（SAVES）列表里。",
+      "importVault": "推荐安装方式：用 TTS Mod Vault 打开本 .ttsmod 文件并导入。",
+      "importManual": "手动安装方式：把本压缩包解压到指定目录（见下一行）。",
+      "unzipTargetWarning": "⚠️ 解压目标是 Mods 目录的父目录（TTS 数据根目录），不是 Mods 目录本身！",
+      "modsLayout": "解压后应得到 <该目录>/Mods/… 的目录结构；Mod Vault 会自动选对位置。",
+      "missingNote": "注意：打包时有 {count} 条素材缺失未能包含，TTS 加载这些对象时会尝试联网重新下载。",
+      "kindCount": {
+        "image": "图片素材 {count} 条",
+        "model": "模型素材 {count} 条",
+        "assetbundle": "资源包素材 {count} 条",
+        "pdf": "PDF 素材 {count} 条",
+        "audio": "音频素材 {count} 条"
+      }
+    }
   },
   "common": {
     "yes": "是",

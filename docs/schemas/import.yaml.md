@@ -75,7 +75,7 @@
 - 文件字段按类型校验：`type` 决定哪些文件字段必填（见上表"按类型"），多余字段会被 strictObject 拒绝。
 - 路径同样相对清单文件所在目录。
 - 导入即校验：文件存在性、格式可读（图像类拒 CMYK）。
-- 导入后自动生成或更新 `objects/objects.csv`；`asset_id` 一旦生成**永不改变**，`origin_asset_id`（来源 URL 哈希）在换 URL 时重算（见 `方案设计.md` §5.9）。
+- 导入后自动生成或更新 `objects/objects.csv`；`asset_id` 一旦生成**永不改变**（见 `方案设计.md` §5.9）。导入流程**不写 `origin_asset_id`**：该列语义为"从别的图包复制来时的原始 `asset_id`"（溯源），由 copy 流程自行写入，不做哈希计算（与 `docs/schemas/objects.csv.md` §12.2 口径一致，窗口 C 主窗口 2026-10-05 裁决对齐）。
 
 ---
 
@@ -144,3 +144,4 @@ objects:                              # 非卡牌素材
 | 日期 | 变更 |
 | --- | --- |
 | 2026-10-05 | 初版（窗口 C / 阶段 3A）。命名裁决：导入清单定名 `import.yaml`，与 `assets.yaml`（URL 台账）划界。契约依据 `方案设计.md` §4.6 / §5.11。 |
+| 2026-10-05 | §4 修正（窗口 C 主窗口裁决）：导入流程不写 `origin_asset_id`，与 `objects.csv.md` §12.2 的"原始 asset_id 溯源、不做哈希"口径对齐（此前误写"来源 URL 哈希"，与冻结的 objects.csv 契约矛盾）。 |

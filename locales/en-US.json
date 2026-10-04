@@ -567,9 +567,56 @@
       "duplicateId": "Duplicate asset_id in objects.csv: {path} ({assetId})",
       "writeFailed": "Failed to write objects.csv: {path} ({detail})"
     },
+    "host": {
+      "notFound": "Image host {id} not found: run tts host list to see available hosts (built-in default is steamcloud; others must be declared in the config file or the plugin directory)",
+      "invalidInput": "Invalid upload input: {detail}",
+      "configInvalid": "Invalid configuration for image host {name}: {detail}",
+      "configReadFailed": "Failed to read image host config file: {path} ({detail})",
+      "pluginLoadFailed": "Failed to load image host plugin: {path} ({detail})",
+      "pluginInvalid": "Invalid image host plugin: {path} ({detail})",
+      "uploadFailed": "Image host {host} failed to upload {file}: {detail}",
+      "noUrlInOutput": "Upload command printed no http(s) URL on stdout: {file} (stdout: {stdout})",
+      "commandNonZero": "Command exited with code {code}, stderr: {stderr}",
+      "commandTimeout": "Command timed out after {seconds} seconds and was killed",
+      "commandAborted": "Command was aborted",
+      "commandSpawnFailed": "Failed to start command: {detail}",
+      "stderrEmpty": "(no stderr output)",
+      "duplicateId": "Duplicate image host id: {id} (first provided by {first}, conflicting source {second})",
+      "reservedId": "{name} is the built-in default image host name; choose another name in the config or plugin",
+      "checkNotLocal": "The local image host can only check file:// URLs or local paths, got: {url}",
+      "localFileMissing": "Local file does not exist: {path}",
+      "fileTooLarge": "File {file} exceeds the image host size limit: {size} bytes (limit {max} bytes)",
+      "probeUnavailable": "No probe result obtained: {url}",
+      "httpStatusDead": "HTTP status {status} (non-2xx treated as not alive)",
+      "config": {
+        "notObject": "hosts must be a key-value object",
+        "rootNotObject": "Config file root must be a key-value object",
+        "emptyName": "Image host name cannot be an empty string",
+        "missingCommand": "type command requires the command template",
+        "missingS3Fields": "type s3 is missing required fields: {fields}",
+        "missingLocalDir": "type local requires dir (the image host's output directory)",
+        "invalidEndpoint": "endpoint must be an http(s) URL: {value}"
+      }
+    },
+    "assets": {
+      "fetchInvalid": "Invalid asset download arguments: {detail}",
+      "invalidUrl": "Invalid URL: {detail}",
+      "invalidExt": "Invalid file extension: {detail}",
+      "urlAllStripped": "URL contains no alphanumeric characters after stripping; cannot be used as a cache file name",
+      "migrateInvalid": "Invalid asset migration arguments: {detail}",
+      "migrateRoot": "Invalid save root object: {detail}",
+      "migrateMapping": "Invalid URL mapping: {detail}",
+      "migrateMappingKind": "Must be a Map or a plain object (string → string)",
+      "presetInvalid": "Invalid offline preset arguments: {detail}",
+      "presetWriteFailed": "Failed to create the offline preset directory: {detail}"
+    },
     "ASSETS_INVALID": "assets.yaml validation failed: {msg}",
     "ASSETS_READ_FAILED": "Failed to read assets.yaml: {msg}",
     "ASSETS_WRITE_FAILED": "Failed to write assets.yaml: {msg}",
+    "ASSETS_FETCH_INVALID": "Invalid asset download arguments: {msg}",
+    "ASSETS_MIGRATE_INVALID": "Invalid asset migration arguments: {msg}",
+    "ASSETS_PRESET_INVALID": "Invalid offline preset arguments: {msg}",
+    "ASSETS_PRESET_WRITE_FAILED": "Failed to write the offline preset: {msg}",
     "BUILD_FAILED": "Failed to build the pack: {msg}",
     "DECK_INVALID": "deck.yaml validation failed: {msg}",
     "DECK_NOT_FOUND": "deck.yaml not found: {msg}",
@@ -612,7 +659,142 @@
     "LFS_ENABLE_FAILED": "Failed to enable lfs: {msg}",
     "VCS_ADD_FAILED": "git add failed: {msg}",
     "VCS_COMMIT_FAILED": "git commit failed: {msg}",
-    "SIZE_SCAN_FAILED": "Failed to scan repository size: {msg}"
+    "SIZE_SCAN_FAILED": "Failed to scan repository size: {msg}",
+    "HOST_NOT_FOUND": "Image host operation failed: {msg}",
+    "HOST_CONFIG_INVALID": "Invalid image host configuration: {msg}",
+    "HOST_PLUGIN_LOAD_FAILED": "Failed to load image host plugin: {msg}",
+    "HOST_PLUGIN_INVALID": "Invalid image host plugin: {msg}",
+    "HOST_INVALID_INPUT": "Invalid image host upload input: {msg}",
+    "HOST_UPLOAD_FAILED": "Image host upload failed: {msg}",
+    "archive": {
+      "inputMissing": ".ttsmod file not found: {path}",
+      "notZip": "Not a valid ZIP file (a .ttsmod must be a ZIP): {path}",
+      "corrupt": "ZIP structure damaged or entry cannot be decompressed: {detail}",
+      "exportWriteFailed": "Failed to write .ttsmod: {path} ({detail})",
+      "strictMissing": "Assets incomplete (strict mode): {count} asset(s) missing or extension detection failed; packing aborted, no .ttsmod produced:\n{list}"
+    }
+  },
+  "host": {
+    "steamcloud": {
+      "pendingHint": "{count} file(s) are staged for upload: staging directory {stagingDir}; manifest {manifestPath}. Open Cloud Manager → Upload All in-game to upload them in one click (this is an acceptable manual step, not a failure); once uploaded, the game rewrites the URLs in the save automatically, no manual patching needed.",
+      "manifestHint": "Steam Cloud pending-upload manifest: {count} file(s) in total. Upload them via Cloud Manager → Upload All in-game; afterwards the game rewrites the URLs in the save automatically."
+    }
+  },
+  "assets": {
+    "fetch": {
+      "category": {
+        "ok": "OK",
+        "migratable": "Migratable",
+        "dead": "Dead link",
+        "manual": "Needs manual work"
+      },
+      "kind": {
+        "plain": "Plain HTTP(S)",
+        "steamCloud": "Steam Cloud (legacy domain)",
+        "gdrive": "Google Drive",
+        "dropbox": "Dropbox",
+        "paste": "Paste sites (paste.ee / pastebin / gist)",
+        "imgur": "Imgur",
+        "localFile": "Local path (file:)",
+        "langVariant": "Language variant (value contains language segments)",
+        "unknown": "Unrecognized"
+      },
+      "fix": {
+        "addProtocol": "Add the missing https:// protocol",
+        "convertDirect": "Convert share link to a direct link",
+        "migrateDomain": "Migrate the domain (cloud-*.steamusercontent.com → steamusercontent-a.akamaihd.net)",
+        "reupload": "Re-upload the asset and replace the URL",
+        "manualReview": "Review and handle manually"
+      },
+      "manualReason": {
+        "localFile": "A file: path points to the original author's machine and cannot be downloaded; other players will not see this asset. Re-upload required.",
+        "langVariant": "Language-variant URL (value contains language segments) is not handled automatically; please review manually",
+        "unknownKind": "Unrecognized URL form; the tool will not handle it automatically",
+        "gdriveNotFile": "The Google Drive link is not a file (possibly a folder); cannot convert to a direct link"
+      },
+      "httpError": "HTTP status {status} (non-2xx)",
+      "migratedAlive": "The original URL is dead ({reason}), but works after migrating to the Akamai domain; rewriting recommended",
+      "gdriveHtml": "Google Drive returned a web page instead of a file (possibly the large-file virus-scan confirmation page); manual handling required",
+      "netError": {
+        "timeout": "Request timed out (no response within {ms}ms)",
+        "tooManyRedirects": "Too many redirects (limit {max})",
+        "oversized": "Response body exceeds the size limit ({max} bytes)",
+        "ENOTFOUND": "Domain name resolution failed",
+        "EAI_AGAIN": "Temporary DNS resolution failure",
+        "ECONNREFUSED": "Connection refused",
+        "ECONNRESET": "Connection reset",
+        "ETIMEDOUT": "Connection timed out",
+        "EHOSTUNREACH": "Destination host unreachable",
+        "ENETUNREACH": "Network unreachable",
+        "CERT_HAS_EXPIRED": "TLS certificate has expired",
+        "ERR_INVALID_URL": "Invalid URL format",
+        "UND_ERR_CONNECT_TIMEOUT": "Timed out establishing the connection",
+        "UND_ERR_HEADERS_TIMEOUT": "Timed out waiting for response headers",
+        "UND_ERR_BODY_TIMEOUT": "Timed out reading the response body",
+        "UND_ERR_SOCKET": "Connection interrupted unexpectedly",
+        "UND_ERR_CLOSED": "Connection already closed",
+        "UND_ERR_DESTROYED": "Connection already destroyed",
+        "UND_ERR_PRX_TLS": "Proxy TLS handshake failed",
+        "UND_ERR_RESPONSE": "Response error",
+        "unknown": "Request failed: {message}"
+      }
+    },
+    "migrate": {
+      "extUnknown": "Cannot determine the file extension (neither the URL path nor the Content-Type gives a clue); specify it explicitly via ext",
+      "writeFailed": "Failed to write the cache file: {detail}",
+      "presetSummary": "Offline preset finished: {written} written / {failed} failed / {skipped} skipped",
+      "migrationSummary": "URL migration finished: {rewritten} rewritten / {visited} visited in total / {localFiles} local paths"
+    }
+  },
+  "archive": {
+    "kind": {
+      "image": "image",
+      "model": "model",
+      "assetbundle": "assetbundle",
+      "pdf": "PDF",
+      "audio": "audio"
+    },
+    "detect": {
+      "unresolvedSummary": "Extension detection failed for {count} asset(s) after all three fallbacks (URL path → local cache directory → HTTP Content-Type):",
+      "unresolvedItem": "  - [{kind}] {url}"
+    },
+    "export": {
+      "skippedSummary": "{count} asset(s) could not be packed and were skipped (missing assets are skipped by default, like the original tool; use --strict to turn this into an error):",
+      "skippedMissing": "  - local file missing: [{kind}] {url}",
+      "skippedExt": "  - extension detection failed: [{kind}] {url}",
+      "duplicateEntry": "Duplicate entry {entry}; only the first one is kept"
+    },
+    "import": {
+      "skippedExistingSummary": "{count} file(s) already exist and were NOT overwritten (by design):",
+      "skippedExistingItem": "  - {path}",
+      "unsafeEntrySkipped": "Skipped unsafe entry inside the archive (path escape): {name}",
+      "manifestInvalid": "manifest.json is not valid JSON, ignored: {name}"
+    },
+    "readme": {
+      "sectionZh": "—— 中文说明 ——",
+      "sectionEn": "—— English ——",
+      "title": "Pack README: {packName}",
+      "generatedBy": "This package was created with {tool} v{version}.",
+      "createdAt": "Packed at: {time} (ISO 8601, UTC)",
+      "packVersion": "Pack version: {version}",
+      "sourceWorkshop": "Source Workshop ID: {id}",
+      "sourceWorkshopNone": "Source Workshop ID: none (unpublished)",
+      "sourceMod": "Upstream mod ID: {id}",
+      "contents": "Included assets:",
+      "saveNote": "This package is a save backup: after extraction the save shows up in the SAVES list of Tabletop Simulator.",
+      "importVault": "Recommended install: open this .ttsmod file with TTS Mod Vault and import it.",
+      "importManual": "Manual install: extract this archive into the target directory (see next line).",
+      "unzipTargetWarning": "⚠️ The extraction target is the PARENT directory of the Mods folder (the TTS data root), NOT the Mods folder itself!",
+      "modsLayout": "After extraction you should see a <target>/Mods/… layout; TTS Mod Vault picks the right location automatically.",
+      "missingNote": "Note: {count} asset(s) were missing when packing and are not included; Tabletop Simulator will try to download them again when loading those objects.",
+      "kindCount": {
+        "image": "{count} image asset(s)",
+        "model": "{count} model asset(s)",
+        "assetbundle": "{count} assetbundle(s)",
+        "pdf": "{count} PDF asset(s)",
+        "audio": "{count} audio asset(s)"
+      }
+    }
   },
   "common": {
     "yes": "Yes",

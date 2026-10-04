@@ -33,6 +33,56 @@
           }
         }
       },
+      "pack": {
+        "description": "Manage pack workspaces",
+        "build": {
+          "description": "Build workspace into a loadable save JSON",
+          "option": {
+            "dryRun": "Print summary only; do not write",
+            "out": "Output JSON path",
+            "root": "Workspace root"
+          }
+        },
+        "diff": {
+          "description": "Diff workspace against running TTS scripts/UI",
+          "option": {
+            "root": "Workspace root"
+          }
+        },
+        "init": {
+          "description": "Initialize a new pack workspace",
+          "argument": {
+            "dir": "Target directory"
+          },
+          "option": {
+            "lfs": "Explicitly set git-lfs: enabled or disabled",
+            "name": "Pack name (defaults to directory name)",
+            "skipGit": "Skip git init"
+          }
+        },
+        "pull": {
+          "description": "Pull scripts/UI from running TTS into the workspace",
+          "option": {
+            "root": "Workspace root"
+          }
+        },
+        "push": {
+          "description": "List scripts/UI to push back to game (skeleton; actual push in phase 5)",
+          "option": {
+            "root": "Workspace root"
+          }
+        },
+        "unpack": {
+          "description": "Build a pack workspace from a save JSON or .ttsmod offline",
+          "argument": {
+            "save": "Path to save file (.json or .ttsmod)"
+          },
+          "option": {
+            "name": "Pack name",
+            "out": "Output directory (default ./packs/<name>)"
+          }
+        }
+      },
       "pull": {
         "description": "Pull all Lua scripts and UI files from the current save into a directory",
         "argument": {
@@ -66,6 +116,38 @@
       "notRunning": "No running TTS editor detected: start the game and open the Editor first",
       "version": "Script engine version: {version}",
       "objects": "Objects in the current save: {count}"
+    },
+    "pack": {
+      "build": {
+        "done": "Wrote {outPath}: replaced {scripts} scripts / {ui} UIs / {objects} objects",
+        "dryRunNote": "(dry-run; no file written)",
+        "warnInvalidGuid": "Skipping entry with invalid GUID at {loc}",
+        "warnScriptOrphan": "Workspace script has no matching GUID in skeleton: {file}",
+        "warnUiOrphan": "Workspace UI has no matching GUID in skeleton: {file}",
+        "warnObjectOrphan": "Workspace object has no matching GUID in skeleton: {path}",
+        "warnDeckOrphan": "Workspace deck has no matching GUID in skeleton: {path}",
+        "warnAmbiguousScript": "GUID {guid} matches multiple script files, skipping: {file}",
+        "warnAmbiguousUi": "GUID {guid} matches multiple UI files, skipping: {file}",
+        "warnDataUnreadable": "Cannot read data file {path}: {detail}",
+        "warnDataDuplicate": "GUID {guid} has duplicate data files, skipping: {path}"
+      },
+      "diff": {
+        "summary": "Diff: {added} added / {modified} modified / {deleted} deleted"
+      },
+      "init": {
+        "done": "Pack workspace created at {dir}",
+        "lfsConfirmDisable": "Really disable lfs? 10 edits may cost tens of GB (y/N):",
+        "lfsPrompt": "git-lfs not detected. Pack images are binary; without lfs, 10 edits may cost tens of GB.\n  1. Install git-lfs (recommended)\n  2. Disable lfs (not recommended)\n  3. Cancel\nChoose [1/2/3]:"
+      },
+      "pull": {
+        "done": "Pulled {scripts} scripts / {ui} UIs; skipped {skipped} (unchanged)"
+      },
+      "push": {
+        "note": "(Skeleton: actual push in phase 5; this run only lists what would be pushed)"
+      },
+      "unpack": {
+        "done": "Unpacked {save} to {outDir}: {scripts} scripts, {ui} UIs, {objects} objects"
+      }
     },
     "pull": {
       "done": "Pull complete: {scripts} script(s), {ui} UI file(s)",
@@ -133,7 +215,15 @@
     "timeout": "Operation timed out after {seconds}s: {detail}",
     "jsonParse": "JSON parse failed: {detail}",
     "invalidDatadir": "Invalid TTS data directory: {path}",
-    "generic": "Operation failed: {message}"
+    "generic": "Operation failed: {message}",
+    "PACK_NOT_FOUND": "Pack workspace not found: {msg}",
+    "PACK_INVALID": "pack.yaml validation failed: {msg}",
+    "PACK_EXISTS": "Directory is already a pack workspace: {msg}",
+    "GIT_INIT_FAILED": "git init failed: {msg}",
+    "SKELETON_MISSING": "Missing .tts/skeleton.json; run tts pack unpack first: {msg}",
+    "UNPACK_FAILED": "Unpack failed: {msg}",
+    "TTSMOD_INVALID": "Invalid or corrupted .ttsmod file: {msg}",
+    "SAVE_INVALID": "Invalid save JSON: {msg}"
   },
   "common": {
     "yes": "Yes",

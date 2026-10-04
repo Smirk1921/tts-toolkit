@@ -33,6 +33,56 @@
           }
         }
       },
+      "pack": {
+        "description": "图包工作区管理",
+        "build": {
+          "description": "把图包工作区合成 TTS 可加载的存档 JSON",
+          "option": {
+            "dryRun": "只打印摘要，不写文件",
+            "out": "输出 JSON 路径",
+            "root": "工作区根目录"
+          }
+        },
+        "diff": {
+          "description": "对比工作区与运行中 TTS 的脚本/UI 差异",
+          "option": {
+            "root": "工作区根目录"
+          }
+        },
+        "init": {
+          "description": "新建图包工作区",
+          "argument": {
+            "dir": "目标目录"
+          },
+          "option": {
+            "lfs": "显式指定 git-lfs：enabled 或 disabled",
+            "name": "图包名（默认取目录名）",
+            "skipGit": "跳过 git init"
+          }
+        },
+        "pull": {
+          "description": "从运行中的 TTS 拉取脚本/UI 到工作区",
+          "option": {
+            "root": "工作区根目录"
+          }
+        },
+        "push": {
+          "description": "列出将推回游戏的脚本/UI（骨架实现，阶段 5 才实际推送）",
+          "option": {
+            "root": "工作区根目录"
+          }
+        },
+        "unpack": {
+          "description": "从存档 JSON 或 .ttsmod 离线建图包工作区",
+          "argument": {
+            "save": "存档文件路径（.json 或 .ttsmod）"
+          },
+          "option": {
+            "name": "图包名",
+            "out": "输出目录（默认 ./packs/<name>）"
+          }
+        }
+      },
       "pull": {
         "description": "从当前存档拉取全部 Lua 脚本与 UI 界面到目录",
         "argument": {
@@ -66,6 +116,38 @@
       "notRunning": "未检测到正在运行的 TTS 编辑器：请先启动游戏并进入「编辑器」界面",
       "version": "脚本引擎版本：{version}",
       "objects": "当前存档对象数：{count}"
+    },
+    "pack": {
+      "build": {
+        "done": "已写出 {outPath}：替换 {scripts} 脚本 / {ui} UI / {objects} 对象",
+        "dryRunNote": "（dry-run，未写文件）",
+        "warnInvalidGuid": "跳过非法 GUID 位置：{loc}",
+        "warnScriptOrphan": "工作区脚本在骨架中找不到对应 GUID：{file}",
+        "warnUiOrphan": "工作区 UI 在骨架中找不到对应 GUID：{file}",
+        "warnObjectOrphan": "工作区对象在骨架中找不到对应 GUID：{path}",
+        "warnDeckOrphan": "工作区牌堆在骨架中找不到对应 GUID：{path}",
+        "warnAmbiguousScript": "GUID {guid} 匹配到多个脚本文件，跳过：{file}",
+        "warnAmbiguousUi": "GUID {guid} 匹配到多个 UI 文件，跳过：{file}",
+        "warnDataUnreadable": "无法读取数据文件 {path}：{detail}",
+        "warnDataDuplicate": "GUID {guid} 出现重复数据文件，跳过：{path}"
+      },
+      "diff": {
+        "summary": "差异：新增 {added} / 修改 {modified} / 删除 {deleted}"
+      },
+      "init": {
+        "done": "图包工作区已创建于 {dir}",
+        "lfsConfirmDisable": "确定禁用 lfs？改 10 轮可能几十 GB (y/N):",
+        "lfsPrompt": "未检测到 git-lfs。图包图片是二进制，不用 lfs 改 10 轮可能几十 GB。\n  1. 安装 git-lfs（推荐）\n  2. 禁用 lfs（不推荐）\n  3. 取消\n请选择 [1/2/3]:"
+      },
+      "pull": {
+        "done": "已拉取 {scripts} 脚本 / {ui} UI，跳过 {skipped} 项（与本地一致）"
+      },
+      "push": {
+        "note": "（骨架实现：阶段 5 才实际推送，本次仅列出将推送的清单）"
+      },
+      "unpack": {
+        "done": "已从 {save} 解包到 {outDir}：{scripts} 脚本，{ui} UI，{objects} 对象"
+      }
     },
     "pull": {
       "done": "拉取完成：脚本 {scripts} 个，UI 界面 {ui} 个",
@@ -133,7 +215,15 @@
     "timeout": "操作超时（{seconds} 秒）：{detail}",
     "jsonParse": "JSON 解析失败：{detail}",
     "invalidDatadir": "TTS 数据目录无效：{path}",
-    "generic": "操作失败：{message}"
+    "generic": "操作失败：{message}",
+    "PACK_NOT_FOUND": "未找到图包工作区：{msg}",
+    "PACK_INVALID": "pack.yaml 校验失败：{msg}",
+    "PACK_EXISTS": "目录已是图包工作区：{msg}",
+    "GIT_INIT_FAILED": "git init 失败：{msg}",
+    "SKELETON_MISSING": "缺少骨架存档 .tts/skeleton.json，请先运行 tts pack unpack：{msg}",
+    "UNPACK_FAILED": "解包失败：{msg}",
+    "TTSMOD_INVALID": ".ttsmod 文件无效或已损坏：{msg}",
+    "SAVE_INVALID": "存档 JSON 无效：{msg}"
   },
   "common": {
     "yes": "是",

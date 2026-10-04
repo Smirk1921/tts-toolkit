@@ -134,7 +134,120 @@ $ tts pack build --root ./my-pack --dry-run
 - **`tts pack diff`** 对比工作区与运行中 TTS 的脚本/UI 差异（added/modified/deleted）。
 - **`tts pack build`** 把工作区合成 TTS 可加载的存档 JSON（约束 8：读 skeleton + 按 GUID 定点替换，未改动对象与骨架逐字节一致）；`--dry-run` 只打印摘要。
 
-工作区契约文档见 [`docs/schemas/`](./docs/schemas/)（`pack.yaml` / `deck.yaml` / `assets.yaml` 三份，B2/B3 必读）。
+工作区契约文档见 [`docs/schemas/`](./docs/schemas/)（`pack.yaml` / `deck.yaml` / `assets.yaml` / `cards.csv` / `objects.csv` / `registry.yaml` 六份，B2/B3 必读）。
+
+### 7. 卡牌图集：`tts deck *`（阶段 2B 新增）
+
+**离线**做卡牌图集的切片 / 重新拼接 / 原位拼回 / URL 替换 dry-run / 一致性校验。卡牌明细的唯一源是 `<deck>/cards.csv`（10 列严格顺序）；`deck.yaml` 只留元数据（name/guid/shared_with/atlas）。
+
+```console
+$ tts deck slice --sheet 第七大陆卡图.png --cols 5 --rows 5 --save save.json -o ./cards
+已切片：5 张卡到 ./cards/冒险牌堆/
+
+$ tts deck generate --cards ./cards --cols 10 --rows 7 -o ./rebuilt.png
+已重新排版：70 张卡 → 1 张图集
+
+$ tts deck generate --in-place --deck 冒险牌堆 --root ./my-pack
+已原位拼回：3 张卡换图，67 张保持原像素
+
+$ tts deck plan --replace https://old.com/=https://new.com/ --root ./my-pack
+替换计划：影响 52 处 / 涉及 52 个对象（父牌堆 + 每张 Card 子对象的 CustomDeck 都覆盖）
+
+$ tts deck verify --root ./my-pack
+校验完成：0 错误，2 警告
+```
+
+要点：
+
+- **1 基 slot 写死**：`cards.csv` 的 `slot` 列与 `CardID % 100` 一致（%100===0 记 100）。
+- **slot 是不变量**：重新排版时按 card_id 的 slot 连续段切，不改卡序。
+- **余数吸收机制**：源图集不整除网格时（如 4096/5=819.2），单格尺寸按 `floor(源/cols)` 取整，剩余像素由最后一列/行吸收——切片/拼回/校验四处统一。
+- **UniqueBack 两种**：`true` 切 70 张背面；`false + BackURL==FaceURL` 降级为无自定义背面（不重复切）。
+- **共享图集**：同一 URL 被多个 CustomDeck 引用时，`slice` 列出所有候选牌堆让用户选，写入 `deck.yaml` 的 `shared_with`。
+
+### 8. 多图包与版本控制：`tts pack list/status/open` + `tts vcs *`（阶段 2C 新增）
+
+**多图包统一视图**：所有图包注册到 `<packs_root>/.registry.yaml`（含名称/类型/上游工坊/当前分支/图床/统计/lfs 状态）。
+
+**git 版本控制语义封装**：把 `git status` 的文件级输出**翻译成图包语言**——"冒险牌堆 12 张卡换图"而不是"`decks/冒险牌堆/001_正面.png` 已修改"。**绝不替用户做合并选择**。
+
+```console
+$ tts pack list --root ./packs
+已注册图包（2 个）：
+  第七大陆全扩  第七大陆全扩（脚本汉化）  zh-cn  true   enabled
+  沉睡的神祇   沉睡的神祇              main   false  disabled
+
+$ tts pack list --dirty
+已注册图包（1 个）：
+  第七大陆全扩  第七大陆全扩（脚本汉化）  zh-cn  true  enabled
+
+$ tts pack status 第七大陆全扩
+dir: 第七大陆全扩
+name: 第七大陆全扩（脚本汉化）
+kind: localization
+branch: zh-cn
+...
+
+$ tts vcs status
+冒险牌堆 2 张卡换图（001_正面.png, 002_正面.png）
+素材 tile_01 改动
+Global 脚本 +5/-1 行
+
+$ tts vcs commit -m "汉化冒险牌堆"
+已提交 32ab68e：汉化冒险牌堆：替换 冒险牌堆 2 张卡图，修改 Global 脚本（+8/-0 行），更新素材 tile_01
+
+$ tts vcs status --conflicts     # 有 merge UU 时
+冒险牌堆 1 张卡换图（001_正面.png）
+发现 1 个合并冲突：
+⚠️ 卡牌图片冲突（需人工选择）
+
+牌堆：冒险牌堆 (GUID: abc123)
+卡牌：迷路的旅人 (CardID: 101)
+文件：decks/冒险牌堆/001_正面.png（正面）
+所属图集：sheet_id=1, slot=1
+源 URL：https://example.com/sheet1.png
+冲突类型：双方都修改 (UU)
+
+选择：
+  git checkout --ours   decks/冒险牌堆/001_正面.png   # 保留当前分支版本
+  git checkout --theirs decks/冒险牌堆/001_正面.png   # 用对方分支版本
+  或手动用图像工具合成后 git add
+
+$ tts vcs verify
+校验完成：0 错误，1 警告（存在未提交改动）
+
+$ tts vcs size
+工作区体积：1.23 KB
+.git 体积：806.03 KB
+.git/lfs/objects 体积：768.09 KB
+按目录分解：
+  decks    329 B  4
+  scripts  171 B  1
+  ...
+
+$ tts vcs lfs status
+git-lfs 已安装（版本 3.7.1）
+.gitattributes 含 lfs 规则：true
+pack.yaml 的 vcs.lfs：enabled
+三方一致（lfs 状态正常）
+
+$ tts vcs lfs disable            # 强制二次确认（约束 10）
+⚠️  禁用 git-lfs 后：
+   - 每次修改一张卡图，git 都会存一整份新副本
+   - 一个图包改 10 轮，仓库可能膨胀到几十 GB
+   - 推送到远端会非常慢，某些托管商可能拒绝（GitHub 单文件 100MB 上限）
+确认禁用？此操作建议仅用于「纯本地、不打算推远端」的场景。
+输入 yes 确认：yes
+lfs 已禁用（.gitattributes 的 lfs 规则已清空，pack.yaml 已写为 disabled）
+```
+
+要点：
+
+- **`.registry.yaml` 并发写保护**：乐观锁（mtime 校验），写冲突抛 `REGISTRY_CONFLICT`（不引入文件锁）。
+- **`vcs verify` 是 `deck verify` 的超集**：先跑 deck verify（网格/卡数/CMYK/CardID/父子一致/共享图集），再加 git 检查（未提交改动 / UU 冲突 / lfs 三方一致性）。
+- **`vcs size` 三数字同报**：lfs 启用时必须同时给"工作区体积"和"lfs 对象体积"（方案设计 §4.11.1）。
+- **冲突语义化反查**：从 `cards.csv` / `objects.csv` 反查冲突文件对应的 CardID / sheet_id / slot / sheet_source；**绝不替用户选边**（不自动跑 `--ours/--theirs`）。
+- **`vcs commit` 自动 message**：基于 `analyzeStatus` 的语义化结果，按"卡图 > 卡表 > 脚本 > UI > 素材 > 元数据"优先级取前 3 条，超过 3 条末尾加"等 N 项改动"。
 
 ### 全局选项
 

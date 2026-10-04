@@ -170,6 +170,31 @@ skipLfsPrompt（测试 / 非交互管道） ───→ disabled-no-lfs        
 
 `.registry.yaml` 条目的 `lfs_status` 是本字段的**冗余副本**（读索引不必逐包开 `pack.yaml`），两者不一致时**以本文件为准**；`registry.ts` 不做交叉校验，详见 `docs/schemas/registry.yaml.md` §6.4。
 
+#### 4.3.1 离线用户克隆含 lfs 的仓库（搁置项 S13，2026-10-05 补）
+
+**问题**：图包用 git-lfs 后，仓库里的图片其实是"lfs 指针文件"（文本，指向真实对象在 `.git/lfs/objects/` 或远端 lfs 存储里）。**纯离线用户**（不打算推远端，只想本地用）克隆仓库时会被 lfs  smudge filter 卡住——它需要联网从远端 lfs 存储下载真实图片。
+
+**三种克隆场景**：
+
+| 场景 | 命令 | 工作区得到什么 | 适用 |
+| --- | --- | --- | --- |
+| **完全本地仓库**（无远端，源仓库有完整 `.git/lfs/objects/`） | `git clone /path/to/repo` | 真实图片（lfs 对象从源仓库本地复制） | U盘/局域网分享 |
+| **远端仓库 + 跳过 lfs 下载** | `GIT_LFS_SKIP_SMUDGE=1 git clone <url>` | lfs 指针文件（图片不可用） | 只看代码与元数据，不看图 |
+| **远端仓库 + 完整下载** | `git clone <url>`（默认） | 真实图片（联网从远端 lfs 存储拉） | 标准场景 |
+
+**已克隆的仓库如何把指针换真图**：
+
+```bash
+git lfs pull              # 拉所有 lfs 对象
+git lfs pull --include="decks/冒险牌堆/**"   # 只拉特定路径
+```
+
+**本工具的支持**：
+
+- `tts vcs lfs status` 与 `tts vcs verify` 会识别"`.gitattributes` 声明了 lfs 但本机没装 git-lfs"的不一致状态，按 §4.3 三方一致性表报错（`VCS_LFS_MISSING`），提醒用户工作区里看到的可能是指针文件而非真图。
+- `src/vcs/lfs.ts` 的 `isLfsPointer(filePath)` 可判断单个文件是不是 lfs 指针（读文件头是否以 `version https://git-lfs` 开头），供需要"这张图到底可用不可用"的工具代码使用。
+- **不做**：本工具**不主动**帮用户跑 `git lfs pull`——是否下载真实图片是用户的选择（体积 vs 可用性），工具只报告状态。
+
 ### 4.4 `host` 决定图床上传目标
 
 - 默认 `steamcloud`（`src/pack/packyaml.ts:128-130`，与 `方案设计.md:1532` §6.5 的"默认 `steamcloud`（用户已定）"一致）。

@@ -178,7 +178,9 @@ describe('unpackSave（.json 输入）', () => {
     const deckYaml = await readDeckManifest(deckDir);
     expect(deckYaml.name).toBe('测试牌堆');
     expect(deckYaml.guid).toBe('aa11bb');
-    expect(deckYaml.cards).toEqual([]);
+    // B2 裁决：deck.yaml 不再含 cards 字段（卡牌明细由 src/deck/cards.ts 落到 cards.csv）
+    expect(deckYaml.shared_with).toEqual([]);
+    expect(deckYaml.atlas).toBeUndefined();
 
     // DeckCustom（无 Nickname）→ 名字回退 Name，同样按牌堆处理
     const deck2Dir = path.join(outDir, 'decks', 'ff55aa.DeckCustom');

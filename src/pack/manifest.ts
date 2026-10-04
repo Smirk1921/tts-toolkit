@@ -4,8 +4,10 @@
  *
  * 职责：
  * - deck.yaml（每个 decks/<name>/ 子目录一份，{@link DECK_YAML_FILENAME}）：
- *   描述一个卡牌组的显示名、GUID、共享图集的对象列表、卡牌索引 → 图片映射、
- *   以及可选的图集布局（{@link deckManifestSchema}）；
+ *   描述一个卡牌组的显示名、GUID、共享图集的对象列表、以及可选的图集布局
+ *   （{@link deckManifestSchema}）。**卡牌明细不在本文件**——根据 B2 主窗口裁决，
+ *   卡牌以 CardID 为主键的明细落 `<deckDir>/cards.csv`（见 src/deck/cards.ts），
+ *   deck.yaml 只保留牌堆级元数据；
  * - assets.yaml（图包根目录至多一份，{@link ASSETS_YAML_FILENAME}）：
  *   记录图包引用的外部素材（当前 URL、可选 sha256 / 图床类型），
  *   供素材续传 / URL 体检等流程使用（{@link assetsManifestSchema}）；
@@ -23,10 +25,8 @@
  * - deck.guid 是 6 位十六进制字符串（对应 TTS 对象 GUID，不区分大小写；
  *   读取时不做大小写归一，原样保留）；
  * - deck.shared_with 缺省为 []（YAML 里省略该键时填充空数组）；
- * - deck.cards[].id 是图集内索引（0～68）；face / back 是相对本 deck 目录的
- *   图片文件名；back 缺省表示使用牌堆默认背面；
  * - deck.atlas 可选；"atlas 列行数是否与图集图片实际尺寸匹配"不在本模块校验
- *   （需要读图片尺寸，留给 pack/build.ts 做）；
+ *   （需要读图片尺寸，由 src/deck/verify.ts 在阶段 2B 真正落地）；
  * - assets[].url 是素材当前 URL（可能是死链，本模块不做连通性校验）；
  *   assets[].host / sha256 可选。
  *
@@ -110,34 +110,12 @@ function strictObjectError(label: string): (issue: z.core.$ZodRawIssue) => strin
 }
 
 /**
- * deck.cards[] 单张卡牌条目的 schema（严格模式）。
- *
- * - id：图集内索引，0～68 的整数（设计约定上限 68）；
- * - face：卡牌正面图片文件名（相对本 deck 目录）；
- * - back：自定义背面文件名，缺省用牌堆默认背面；
- * - name / nickname：卡牌名 / 别名，均可缺省。
- */
-const deckCardSchema = z.strictObject(
-  {
-    id: z
-      .number({ error: "卡牌 id 必须是数字" })
-      .int("卡牌 id 必须是整数")
-      .min(0, "卡牌 id 不能小于 0")
-      .max(68, "卡牌 id 不能大于 68"),
-    face: z.string({ error: "卡牌 face 必须是字符串" }),
-    back: z.string({ error: "卡牌 back 必须是字符串" }).optional(),
-    name: z.string({ error: "卡牌 name 必须是字符串" }).optional(),
-    nickname: z.string({ error: "卡牌 nickname 必须是字符串" }).optional(),
-  },
-  { error: strictObjectError("卡牌条目") },
-);
-
-/**
  * deck.atlas 图集布局的 schema（严格模式，整块可选）。
  *
  * size 是字符串形式的图集边长（YAML 里必须带引号写作 "1024"，
  * 裸写 1024 会被当成数字而校验失败——防止 512/2048 这类值静默变类型）。
- * 列行数与图集图片实际尺寸是否匹配由 pack/build.ts 校验，本 schema 只管类型与范围。
+ * 列行数与图集图片实际尺寸是否匹配由 src/deck/verify.ts 在阶段 2B 校验，
+ * 本 schema 只管类型与范围。
  */
 const atlasSchema = z.strictObject(
   {
@@ -167,8 +145,12 @@ const atlasSchema = z.strictObject(
  * - name            string，必填——牌堆显示名
  * - guid            6 位十六进制字符串，必填——牌堆对象 GUID
  * - shared_with     string[]，缺省 []——共享此图集的其他对象 GUID 列表
- * - cards           卡牌条目数组，必填——见 {@link deckCardSchema}
  * - atlas           图集布局，可选——见 {@link atlasSchema}
+ *
+ * B2 主窗口裁决（2026-10-04）：卡牌明细**不在 deck.yaml**——
+ * 原 B1 设计有 `cards: CardEntry[]` 字段，已删除。卡牌明细以 CardID 为主键
+ * 落 `<deckDir>/cards.csv`（见 src/deck/cards.ts 与 docs/schemas/cards.csv.md），
+ * 以兑现"Excel 可编辑 + git 逐行 diff"的核心诉求。
  *
  * 严格模式用 z.strictObject（zod 4 写法），与 object(...).strict() 校验行为完全一致。
  */
@@ -183,7 +165,6 @@ const deckManifestSchema = z.strictObject(
       z.string({ error: "shared_with 条目必须是字符串" }),
       { error: "shared_with 必须是字符串数组" },
     ).default([]),
-    cards: z.array(deckCardSchema, { error: "cards 必须是卡牌条目数组" }),
     atlas: atlasSchema.optional(),
   },
   { error: strictObjectError("deck.yaml 根") },

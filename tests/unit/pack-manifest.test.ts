@@ -6,7 +6,11 @@
  * - 正常路径：write → read 往返一致，缺省字段填充（shared_with → []）；
  * - 异常路径：按 PackError.code（机器可读）断言，不依赖错误文案——
  *   文案走 t()，locales/*.json 由 Run 2 补齐，补齐前后 message 不同；
- * - 边界值：id 0/68、columns 1/10、rows 1/7、guid 大小写。
+ * - 边界值：columns 1/10、rows 1/7、guid 大小写、shared_with 缺省。
+ *
+ * B2 主窗口裁决（2026-10-04）：deck.yaml **不再包含 cards[]**——卡牌明细
+ * 落 `<deckDir>/cards.csv`（见 src/deck/cards.ts 与 tests/unit/deck-cards.test.ts）。
+ * 本文件不再覆盖 cards 相关用例。
  */
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -46,16 +50,12 @@ afterEach(async () => {
 // 测试夹具与辅助
 // ---------------------------------------------------------------------------
 
-/** 合法且字段齐全的 deck 清单（各字段覆盖：shared_with 非空、atlas 存在、可选字段齐全） */
+/** 合法且字段齐全的 deck 清单（shared_with 非空 + atlas 存在） */
 const fullDeck: DeckManifest = {
   schema_version: 1,
   name: '军争包',
   guid: 'a1b2c3',
   shared_with: ['d4e5f6', '0f1e2d'],
-  cards: [
-    { id: 0, face: 'card-000.png', back: 'back-custom.png', name: '杀', nickname: 'Slash' },
-    { id: 68, face: 'card-068.png' },
-  ],
   atlas: { size: '1024', columns: 10, rows: 7 },
 };
 
@@ -108,9 +108,9 @@ describe('deck.yaml 常量与类型', () => {
     expect(ASSETS_YAML_FILENAME).toBe('assets.yaml');
   });
 
-  it('DeckManifest 类型：shared_with 必填（读取时才由缺省值填充）', () => {
+  it('DeckManifest 类型：shared_with 必填（读取时才由缺省值填充），atlas 可选', () => {
     // 编译通过即代表输出类型里 shared_with 是必填字段
-    const m: DeckManifest = { schema_version: 1, name: 'x', guid: 'aabbcc', shared_with: [], cards: [] };
+    const m: DeckManifest = { schema_version: 1, name: 'x', guid: 'aabbcc', shared_with: [] };
     expect(m.shared_with).toEqual([]);
     expect(m.atlas).toBeUndefined();
   });
@@ -123,7 +123,7 @@ describe('deck.yaml 常量与类型', () => {
 });
 
 describe('writeDeckManifest → readDeckManifest 往返', () => {
-  it('字段齐全的清单往返一致（含 atlas / back / nickname / shared_with）', async () => {
+  it('字段齐全的清单往返一致（含 atlas / shared_with）', async () => {
     const deckDir = path.join(tempRoot, 'decks', '军争包');
     await writeDeckManifest(deckDir, fullDeck);
     const read = await readDeckManifest(deckDir);
@@ -136,69 +136,65 @@ describe('writeDeckManifest → readDeckManifest 往返', () => {
     expect(existsSync(path.join(deepDir, DECK_YAML_FILENAME))).toBe(true);
   });
 
-  it('可选字段为 undefined 时不落盘（不会写出 back: null）', async () => {
+  it('最小字段（无 atlas、shared_with 空数组）往返一致', async () => {
     const deckDir = path.join(tempRoot, 'decks', 'd');
-    const withUndefined: DeckManifest = {
+    const minimal: DeckManifest = {
       schema_version: 1,
       name: 'x',
       guid: 'aabbcc',
       shared_with: [],
-      cards: [{ id: 1, face: 'a.png', back: undefined, nickname: undefined }],
     };
-    await writeDeckManifest(deckDir, withUndefined);
+    await writeDeckManifest(deckDir, minimal);
     const read = await readDeckManifest(deckDir);
-    expect(read.cards[0]?.back).toBeUndefined();
-    expect(read.cards[0]?.nickname).toBeUndefined();
-    const raw = await readFile(path.join(deckDir, DECK_YAML_FILENAME), 'utf8');
-    expect(raw).not.toContain('null');
+    expect(read).toEqual(minimal);
+    expect(read.atlas).toBeUndefined();
   });
 });
 
 describe('readDeckManifest：缺省值与边界值', () => {
-  it('YAML 缺省 shared_with / atlas / back 时填充缺省值（shared_with → []）', async () => {
+  it('YAML 缺省 shared_with 时填充 []，atlas 缺省时为 undefined', async () => {
     const deckDir = path.join(tempRoot, 'decks', 'd');
     await writeRawDeckYaml(
       deckDir,
-      ['schema_version: 1', 'name: 基础牌堆', "guid: 'a1b2c3'", 'cards:', '  - id: 3', '    face: c3.png', ''].join('\n'),
+      ['schema_version: 1', 'name: 基础牌堆', "guid: 'a1b2c3'", ''].join('\n'),
     );
     const m = await readDeckManifest(deckDir);
     expect(m.shared_with).toEqual([]);
     expect(m.atlas).toBeUndefined();
-    expect(m.cards[0]?.back).toBeUndefined();
-    expect(m.cards[0]?.name).toBeUndefined();
   });
 
   it('guid 大写十六进制合法（不区分大小写，原样保留）', async () => {
     const deckDir = path.join(tempRoot, 'decks', 'd');
     await writeRawDeckYaml(
       deckDir,
-      ['schema_version: 1', 'name: x', 'guid: A1B2C3', 'shared_with: []', 'cards: []', ''].join('\n'),
+      ['schema_version: 1', 'name: x', 'guid: A1B2C3', ''].join('\n'),
     );
     const m = await readDeckManifest(deckDir);
     expect(m.guid).toBe('A1B2C3');
   });
 
-  it('id / columns / rows 的合法边界值（0、68 / 1、10 / 1、7）', async () => {
+  it('atlas 边界值：columns 1/10、rows 1/7、size 全部四个合法值', async () => {
     const deckDir = path.join(tempRoot, 'decks', 'd');
+    for (const size of ['512', '1024', '2048', '4096'] as const) {
+      await writeDeckManifest(deckDir, {
+        schema_version: 1,
+        name: 'x',
+        guid: 'aabbcc',
+        shared_with: [],
+        atlas: { size, columns: 1, rows: 1 },
+      });
+      const read = await readDeckManifest(deckDir);
+      expect(read.atlas?.size).toBe(size);
+    }
     await writeDeckManifest(deckDir, {
       schema_version: 1,
-      name: '边界',
+      name: 'x',
       guid: 'aabbcc',
       shared_with: [],
-      cards: [{ id: 0, face: 'a.png' }, { id: 68, face: 'b.png' }],
-      atlas: { size: '4096', columns: 1, rows: 1 },
+      atlas: { size: '4096', columns: 10, rows: 7 },
     });
-    await expect(readDeckManifest(deckDir)).resolves.toMatchObject({
-      cards: [{ id: 0 }, { id: 68 }],
-      atlas: { size: '4096', columns: 1, rows: 1 },
-    });
-    await writeDeckManifest(deckDir, {
-      ...fullDeck,
-      atlas: { size: '512', columns: 10, rows: 7 },
-    });
-    await expect(readDeckManifest(deckDir)).resolves.toMatchObject({
-      atlas: { size: '512', columns: 10, rows: 7 },
-    });
+    const read = await readDeckManifest(deckDir);
+    expect(read.atlas).toEqual({ size: '4096', columns: 10, rows: 7 });
   });
 });
 
@@ -225,25 +221,24 @@ describe('readDeckManifest：错误路径', () => {
   });
 
   const badDecks: Array<[string, string]> = [
-    ['schema_version 不是 1', 'schema_version: 2\nname: x\nguid: a1b2c3\ncards: []'],
-    ['guid 非十六进制', 'schema_version: 1\nname: x\nguid: xyzabc\ncards: []'],
-    ['guid 位数不足', 'schema_version: 1\nname: x\nguid: abc12\ncards: []'],
-    ['缺 name', 'schema_version: 1\nguid: a1b2c3\ncards: []'],
-    ['缺 cards', 'schema_version: 1\nname: x\nguid: a1b2c3'],
-    ['cards 不是数组', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards: 3'],
-    ['卡牌 id 超上限', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards:\n  - id: 69\n    face: a.png'],
-    ['卡牌 id 为负', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards:\n  - id: -1\n    face: a.png'],
-    ['卡牌 id 非整数', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards:\n  - id: 1.5\n    face: a.png'],
-    ['卡牌缺 face', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards:\n  - id: 1'],
-    ['根含未知字段', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards: []\nnaem: 拼写错误'],
-    ['卡牌条目含未知字段', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards:\n  - id: 1\n    face: a.png\n    font: x'],
-    ['atlas.size 是数字而非字符串', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards: []\natlas:\n  size: 1024\n  columns: 1\n  rows: 1'],
-    ['atlas.size 非法值', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards: []\natlas:\n  size: "256"\n  columns: 1\n  rows: 1'],
-    ['atlas.columns 超上限', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards: []\natlas:\n  size: "512"\n  columns: 11\n  rows: 1'],
-    ['atlas.columns 为 0', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards: []\natlas:\n  size: "512"\n  columns: 0\n  rows: 1'],
-    ['atlas.rows 超上限', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards: []\natlas:\n  size: "512"\n  columns: 1\n  rows: 8'],
-    ['atlas.rows 为 0', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards: []\natlas:\n  size: "512"\n  columns: 1\n  rows: 0'],
-    ['atlas 含未知字段', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards: []\natlas:\n  size: "512"\n  columns: 1\n  rows: 1\n  dpi: 300'],
+    ['schema_version 不是 1', 'schema_version: 2\nname: x\nguid: a1b2c3'],
+    ['guid 非十六进制', 'schema_version: 1\nname: x\nguid: xyzabc'],
+    ['guid 位数不足', 'schema_version: 1\nname: x\nguid: abc12'],
+    ['缺 name', 'schema_version: 1\nguid: a1b2c3'],
+    ['缺 guid', 'schema_version: 1\nname: x'],
+    ['name 不是字符串', 'schema_version: 1\nname: 3\nguid: a1b2c3'],
+    ['shared_with 不是数组', 'schema_version: 1\nname: x\nguid: a1b2c3\nshared_with: foo'],
+    ['shared_with 条目不是字符串', 'schema_version: 1\nname: x\nguid: a1b2c3\nshared_with:\n  - 3'],
+    ['根含未知字段', 'schema_version: 1\nname: x\nguid: a1b2c3\nnaem: 拼写错误'],
+    // 已删除的 cards 字段（B2 裁决）现在属于"未知字段"，必须被拒绝
+    ['已废弃的 cards 字段（B2 裁决后属未知字段）', 'schema_version: 1\nname: x\nguid: a1b2c3\ncards: []'],
+    ['atlas.size 是数字而非字符串', 'schema_version: 1\nname: x\nguid: a1b2c3\natlas:\n  size: 1024\n  columns: 1\n  rows: 1'],
+    ['atlas.size 非法值', 'schema_version: 1\nname: x\nguid: a1b2c3\natlas:\n  size: "256"\n  columns: 1\n  rows: 1'],
+    ['atlas.columns 超上限', 'schema_version: 1\nname: x\nguid: a1b2c3\natlas:\n  size: "512"\n  columns: 11\n  rows: 1'],
+    ['atlas.columns 为 0', 'schema_version: 1\nname: x\nguid: a1b2c3\natlas:\n  size: "512"\n  columns: 0\n  rows: 1'],
+    ['atlas.rows 超上限', 'schema_version: 1\nname: x\nguid: a1b2c3\natlas:\n  size: "512"\n  columns: 1\n  rows: 8'],
+    ['atlas.rows 为 0', 'schema_version: 1\nname: x\nguid: a1b2c3\natlas:\n  size: "512"\n  columns: 1\n  rows: 0'],
+    ['atlas 含未知字段', 'schema_version: 1\nname: x\nguid: a1b2c3\natlas:\n  size: "512"\n  columns: 1\n  rows: 1\n  dpi: 300'],
   ];
 
   for (const [label, yamlText] of badDecks) {
@@ -251,7 +246,6 @@ describe('readDeckManifest：错误路径', () => {
       const deckDir = path.join(tempRoot, 'd');
       await writeRawDeckYaml(deckDir, `${yamlText}\n`);
       const err = await expectPackError(() => readDeckManifest(deckDir), 'DECK_INVALID');
-      // 问题摘要应含字段路径（如 cards.0.id），便于定位手改 YAML 的错误
       expect(err.message.length).toBeGreaterThan(0);
     });
   }
@@ -277,6 +271,17 @@ describe('writeDeckManifest：写前校验', () => {
     expect(raw).toContain('schema_version: 1');
     expect(raw).toContain('guid: a1b2c3');
     expect(raw).toContain('name: 军争包');
+    // B2 裁决：落盘不再包含 cards 字段
+    expect(raw).not.toContain('cards:');
+  });
+
+  it('共享图集列表落盘（shared_with 含多个 GUID）', async () => {
+    const deckDir = path.join(tempRoot, 'd');
+    await writeDeckManifest(deckDir, fullDeck);
+    const raw = await readFile(path.join(deckDir, DECK_YAML_FILENAME), 'utf8');
+    expect(raw).toContain('shared_with:');
+    expect(raw).toContain('d4e5f6');
+    expect(raw).toContain('0f1e2d');
   });
 });
 
@@ -310,8 +315,8 @@ describe('readAssetsManifest', () => {
     ['host 非法', 'schema_version: 1\nassets:\n  - file: a.png\n    url: https://e.com/a.png\n    host: weibo'],
     ['缺 file', 'schema_version: 1\nassets:\n  - url: https://e.com/a.png'],
     ['缺 url', 'schema_version: 1\nassets:\n  - file: a.png'],
-    ['条目含未知字段', 'schema_version: 1\nassets:\n  - file: a.png\n    url: https://e.com/a.png\n    sha: xx'],
-    ['根含未知字段', 'schema_version: 1\nassets: []\nasset: 拼写错误'],
+    ['素材条目含未知字段', 'schema_version: 1\nassets:\n  - file: a.png\n    url: https://e.com/a.png\n    md5: x'],
+    ['根含未知字段', 'schema_version: 1\nassets: []\nfoo: bar'],
   ];
 
   for (const [label, yamlText] of badAssets) {
@@ -320,31 +325,23 @@ describe('readAssetsManifest', () => {
       await expectPackError(() => readAssetsManifest(tempRoot), 'ASSETS_INVALID');
     });
   }
+});
 
-  it('assets 为空数组合法', async () => {
-    await writeRawAssetsYaml('schema_version: 1\nassets: []\n');
-    await expect(readAssetsManifest(tempRoot)).resolves.toEqual({ schema_version: 1, assets: [] });
+describe('writeAssetsManifest', () => {
+  it('入参不合规 → ASSETS_INVALID 且不落盘', async () => {
+    const bad = { schema_version: 1, assets: [{ file: 'a.png', url: 'not-a-url' }] } as unknown as AssetsManifest;
+    await expectPackError(() => writeAssetsManifest(tempRoot, bad), 'ASSETS_INVALID');
+    expect(existsSync(path.join(tempRoot, ASSETS_YAML_FILENAME))).toBe(false);
   });
 
   it('root 入参为空串 → 普通 Error（编程错误，非 PackError）', async () => {
     await expect(readAssetsManifest('')).rejects.toThrow(/必须是非空字符串路径/);
     await expect(writeAssetsManifest('', fullAssets)).rejects.toThrow(/必须是非空字符串路径/);
   });
-});
 
-describe('writeAssetsManifest', () => {
-  it('root 不存在时自动逐级创建，落盘文本含 schema_version: 1', async () => {
-    const root = path.join(tempRoot, 'packs', '新图包');
-    await writeAssetsManifest(root, fullAssets);
-    const raw = await readFile(path.join(root, ASSETS_YAML_FILENAME), 'utf8');
-    expect(raw).toContain('schema_version: 1');
-    expect(raw).toContain('assets:');
-  });
-
-  it('入参不合规 → ASSETS_INVALID 且不落盘', async () => {
-    const root = path.join(tempRoot, 'p');
-    const bad = { ...fullAssets, assets: [{ file: 'a.png', url: 'nope' }] } as unknown as AssetsManifest;
-    await expectPackError(() => writeAssetsManifest(root, bad), 'ASSETS_INVALID');
-    expect(existsSync(path.join(root, ASSETS_YAML_FILENAME))).toBe(false);
+  it('root 不存在时自动逐级创建', async () => {
+    const deepRoot = path.join(tempRoot, 'a', 'b', 'c');
+    await writeAssetsManifest(deepRoot, fullAssets);
+    expect(existsSync(path.join(deepRoot, ASSETS_YAML_FILENAME))).toBe(true);
   });
 });

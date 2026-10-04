@@ -51,7 +51,8 @@
  *   "每个对象一个目录（data.json + 素材）"的对称结构就是给约束 9 遍历器
  *   预留的接口；
  * - 牌堆判定：Name 含 "Deck"（不区分大小写，覆盖 Deck / DeckCustom）或含
- *   CustomDeck 字段；牌堆落 decks/ 并生成 deck.yaml 骨架（cards 为空数组）。
+ *   CustomDeck 字段；牌堆落 decks/ 并生成 deck.yaml 骨架（不含卡牌明细，
+ *   卡牌明细由阶段 2B 的 cards.csv 承担，见 src/deck/cards.ts）。
  *   GUID 不满足 deck.yaml 的六位十六进制约束时只落 data.json、跳过 deck.yaml
  *   （显式约定而非静默失败，避免个别 GUID 让整包解包中断）；
  * - 临时目录（.ttsmod 解包目录、extractSave 输出目录）在 finally 里 rm -rf 清理。
@@ -606,13 +607,14 @@ async function materializeWorkspace(
     }
 
     // deck.yaml 骨架（GUID 不满足六位十六进制约束时跳过，见模块头注释）
+    // B2 主窗口裁决：deck.yaml 不再写 cards 字段，卡牌明细落 cards.csv
+    // （由 src/deck/cards.ts 生成与维护；unpack 这里只留 deck.yaml 骨架）。
     if (isDeck && DECK_GUID_PATTERN.test(guid)) {
       const deckManifest: DeckManifest = {
         schema_version: 1,
         name: displayName,
         guid,
         shared_with: [],
-        cards: [],
       };
       await writeDeckManifest(targetDir, deckManifest);
     }

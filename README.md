@@ -1,8 +1,8 @@
 # tts-toolkit
 
-面向《桌游模拟器》（Tabletop Simulator）图包作者的命令行工具：通过 TTS 的**外部编辑器协议**直连运行中的游戏，只读地检查连接状态、执行 Lua、拉取全部脚本与 UI、盘点素材 URL；所有面向用户的输出支持中文 / 英文双语。
+面向《桌游模拟器》（Tabletop Simulator）图包作者的命令行工具：通过 TTS 的**外部编辑器协议**直连运行中的游戏，只读地检查连接状态、执行 Lua、拉取全部脚本与 UI、盘点素材 URL；并支持**离线**的图包工作区管理（unpack / build / pull / push / diff），所有面向用户的输出支持中文 / 英文双语。
 
-> 当前进度：阶段 1（基础设施 + 协议层 + 只读 CLI）。所有命令均为只读，不会修改游戏内数据。
+> 当前进度：阶段 1（基础设施 + 协议层 + 只读 CLI）+ 阶段 2A（图包工作区）。`status / exec / pull / assets / config` 等命令只读；`pack init/unpack/build` 离线；`pack pull/diff` 与运行中 TTS 交互；`pack push` 为骨架（阶段 5 才实际写入）。
 
 ## 环境要求
 
@@ -103,6 +103,39 @@ $ tts config datadir
 `%APPDATA%\tts-toolkit\config.yaml`。非交互环境（如脚本、管道）请用
 `tts config datadir --set <path>` 直接写入。
 
+### 6. 图包工作区：`tts pack *`（阶段 2A 新增）
+
+**离线**地管理图包工作区：从存档 JSON 或 `.ttsmod` 解包出 scripts/、ui/、decks/、objects/，改完后再合成回 TTS 可加载的存档 JSON。骨架存档 `.tts/skeleton.json` 是 build 做"按 GUID 定点替换"的依据，**绝不入 git**（已加入 .gitignore）。
+
+```console
+$ tts pack init ./my-pack --name 第七大陆汉化
+图包工作区已创建于 D:\...\my-pack
+
+$ tts pack unpack ./save.json --out ./my-pack
+已从 ./save.json 解包到 ./my-pack：36 脚本，1 UI，251 对象
+
+$ tts pack unpack ./workshop.ttsmod --out ./my-pack
+已从 ./workshop.ttsmod 解包到 ./my-pack：0 脚本，0 UI，11 对象
+
+$ tts pack build --root ./my-pack
+已写出 ./my-pack/dist/my-pack.json：替换 0 脚本 / 0 UI / 0 对象
+
+$ tts pack build --root ./my-pack --dry-run
+已写出 ./my-pack/dist/my-pack.json：替换 0 脚本 / 0 UI / 0 对象
+（dry-run，未写文件）
+```
+
+要点：
+
+- **`tts pack init <dir>`** 新建工作区：`ensureLayout` 建 7 个目录（`scripts/ ui/ decks/ objects/ sheets/ source/ .tts/`）+ 写 `pack.yaml` + `git init` + **git-lfs 强制三选一**（装 / 禁用二次确认 / 取消，约束 10）；可用 `--lfs enabled|disabled` 跳过交互、`--skip-git` 跳过 git。
+- **`tts pack unpack <save>`** 离线解包：支持存档 JSON 或 `.ttsmod`（后者是 ZIP，自动找 `Mods/Workshop/*.json`）。落盘 `.tts/skeleton.json` + 整理 `scripts/`、`ui/`、`decks/`、`objects/`。
+- **`tts pack pull`** 从运行中的 TTS 拉最新脚本/UI 到工作区，**不**更新 skeleton（skeleton 只由 unpack 生成）。
+- **`tts pack push`** 骨架：列出将推回游戏的清单（阶段 5 才实际调 saveAndPlay）。
+- **`tts pack diff`** 对比工作区与运行中 TTS 的脚本/UI 差异（added/modified/deleted）。
+- **`tts pack build`** 把工作区合成 TTS 可加载的存档 JSON（约束 8：读 skeleton + 按 GUID 定点替换，未改动对象与骨架逐字节一致）；`--dry-run` 只打印摘要。
+
+工作区契约文档见 [`docs/schemas/`](./docs/schemas/)（`pack.yaml` / `deck.yaml` / `assets.yaml` 三份，B2/B3 必读）。
+
 ### 全局选项
 
 | 选项 | 说明 |
@@ -201,7 +234,9 @@ src/
   assets/     snake_case ↔ CamelCase 字段映射、素材盘点、URL 存活检测
   datadir/    TTS 数据目录探测与配置读写
   i18n/       极简 t(key, params) 双语实现
-  cli/        commander 命令注册（status / config / pull / exec / assets）
+  pack/       图包工作区：layout / packyaml / manifest / init / unpack / pull / push / diff / build（阶段 2A）
+  cli/        commander 命令注册（status / config / pull / exec / assets / pack）
+docs/schemas/ pack.yaml / deck.yaml / assets.yaml 契约文档（B2/B3 必读）
 locales/      zh-CN.json、en-US.json
 tests/unit/   不依赖 TTS 的单元测试
 tests/integration/  需 TTS 运行的验收测试

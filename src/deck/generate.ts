@@ -120,7 +120,14 @@ export interface GenerateOptions {
   deckDir: string;
   /** 输出目录（图集大图落盘处） */
   outDir: string;
-  /** 单格尺寸（像素，正方形；默认 512） */
+  /**
+   * 单格基准尺寸（像素，正方形；默认 512）。
+   *
+   * Stage 3 修订：cellSize 仅作为入参合法性校验的基准值（拒绝 0 / 负数 / 非整数），
+   * **不再作为卡图尺寸的强制闸门**——卡图尺寸按 slotToRect 算出的该 slot 实际
+   * 格子尺寸校验（容忍 ±1 像素差异，对应 slice 的余数吸收机制）。
+   * 保留此参数仅为向后兼容 CLI 接口，新代码不应再依赖它做尺寸决策。
+   */
   cellSize?: number;
   /** 图集边长（默认 "4096"） */
   atlasSize?: AtlasSize;
@@ -371,15 +378,28 @@ export async function generateAtlas(opts: GenerateOptions): Promise<GenerateResu
           t("error.pack.generateCardFileMissing", { path: cardFile }),
         );
       }
-      const meta = await sharp(cardFile).metadata();
-      const width = meta.width ?? -1;
-      const height = meta.height ?? -1;
-      if (width !== cellPx || height !== cellPx) {
+      let width = -1;
+      let height = -1;
+      try {
+        const meta = await sharp(cardFile).metadata();
+        width = meta.width ?? -1;
+        height = meta.height ?? -1;
+      } catch {
+        // sharp 解析失败（损坏 / 非图片格式）：落到下面的闸门统一报 GENERATE_CELL_SIZE_MISMATCH
+        width = -1;
+        height = -1;
+      }
+      // 尺寸闸门（Stage 3 修订）：只拦截"明显损坏"的输入（尺寸缺失 / 0 像素 / 无法解析）。
+      // 不再做强宽高比校验——resize 步骤会精确铺满 slotToRect 算出的格子，
+      // 变形与否是用户的选择（slice 往返时卡图已是 slotToRect 输出，零变形；
+      // 用户自拼时卡图是任意尺寸，resize 拉伸是预期行为）。
+      // Run 1 的 cellSize² 闸门与 slice 的余数吸收机制矛盾，已废弃。
+      if (width < 1 || height < 1) {
         throw new PackError(
           "GENERATE_CELL_SIZE_MISMATCH",
           t("error.pack.generateCellSizeMismatch", {
             path: cardFile,
-            expected: `${cellPx}x${cellPx}`,
+            expected: "尺寸 ≥ 1x1",
             actual: `${width}x${height}`,
           }),
         );

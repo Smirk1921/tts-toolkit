@@ -462,10 +462,11 @@ describe('cellSize 闸门', () => {
     );
   });
 
-  it('卡图尺寸 ≠ cellSize（300×300 vs 默认 512）→ GENERATE_CELL_SIZE_MISMATCH，message 双态', async () => {
+  it('卡图损坏（不是合法图片）→ GENERATE_CELL_SIZE_MISMATCH，message 双态', async () => {
     const rows = alignedRows(2);
     await makeDeck(rows);
-    await writeCardImage(deckDir, rows[1].face, 300, cardColor(2)); // 第 2 张改成 300×300
+    // 第 2 张改成非图片内容（损坏）
+    await writeFile(path.join(deckDir, rows[1].face), Buffer.from('not a png'));
     const err = await expectGenerateError(() => generateAtlas({ deckDir, outDir }), 'GENERATE_CELL_SIZE_MISMATCH');
     expect(err.message === 'error.pack.generateCellSizeMismatch' || err.message.includes(rows[1].face)).toBe(true);
   });
@@ -494,10 +495,10 @@ describe('错误路径', () => {
     await expectGenerateError(() => generateAtlas({ deckDir, outDir }), 'GENERATE_CARD_FILE_MISSING');
   });
 
-  it('fail-fast：任一卡图尺寸不符 → 不写图集、不创建 outDir、cards.csv 字节不变', async () => {
+  it('fail-fast：任一卡图损坏 → 不写图集、不创建 outDir、cards.csv 字节不变', async () => {
     const rows = alignedRows(3);
     await makeDeck(rows);
-    await writeCardImage(deckDir, rows[1].face, 300, cardColor(2)); // 第 2 张尺寸不对
+    await writeFile(path.join(deckDir, rows[1].face), Buffer.from('not a png')); // 第 2 张损坏
     const before = await readFile(path.join(deckDir, CARDS_CSV_FILENAME));
     await expectGenerateError(() => generateAtlas({ deckDir, outDir }), 'GENERATE_CELL_SIZE_MISMATCH');
     expect(existsSync(outDir)).toBe(false);

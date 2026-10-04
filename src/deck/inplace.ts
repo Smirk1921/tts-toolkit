@@ -95,7 +95,7 @@ import type { OverlayOptions } from "sharp";
 import { t } from "../i18n/index.js";
 import { PackError } from "../pack/packyaml.js";
 
-import { slotToGrid } from "./cardid.js";
+import { slotToRect } from "./grid.js";
 import { CARDS_CSV_FILENAME, readCardsCsv, type CardRow } from "./cards.js";
 
 // ---------------------------------------------------------------------------
@@ -174,8 +174,16 @@ function assertPathOption(value: string, argName: string): void {
 }
 
 /**
- * 确定 cellSize：显式给定则校验与源图集匹配；省略则从源图集推断（方格）。
- * 规则见模块头注释"cellSize 校验"。
+ * 校验源图集尺寸与网格声明的兼容性（Stage 3 修订：支持余数吸收）。
+ *
+ * Stage 3 修订：原版要求"整除 + 正方形"，真实 TTS 图集（4096x4096 配 5x5 网格，
+ * 单格 819.2x819.2）完全不满足。修订为：
+ * - 计算 cellWidth = floor(sourceWidth / columns)，cellHeight = floor(sourceHeight / gridRows)；
+ * - 余数 = sourceWidth % columns（列余数）/ sourceHeight % gridRows（行余数）；
+ * - 余数必须 < columns / gridRows（即每列/行至多吸收 1 像素，与 slotToRect 的语义一致）；
+ * - 显式 declared cellSize 时：要求 declared == cellWidth 且 declared == cellHeight
+ *   （基准尺寸一致；余数吸收到最后一列/行由 slotToRect 处理）；
+ * - 省略 declared 时：要求 cellWidth == cellHeight（基准是方格，余数吸收是另一回事）。
  *
  * @param declared 调用方显式给定的 cellSize（undefined = 推断模式）
  * @param sourceWidth 源图集实际宽度（像素）
@@ -183,7 +191,7 @@ function assertPathOption(value: string, argName: string): void {
  * @param columns 网格列数（cards.csv 的 sheet_cols）
  * @param gridRows 网格行数（cards.csv 的 sheet_rows）
  * @param sheetId 图集编号（仅用于错误信息定位）
- * @returns 单格尺寸（正方形边长，像素）
+ * @returns 基准单格尺寸（正方形边长，像素；不含余数）
  * @throws PackError code="INPLACE_GRID_MISMATCH" 尺寸与网格声明不符时
  */
 function resolveCellSize(
@@ -194,38 +202,43 @@ function resolveCellSize(
   gridRows: number,
   sheetId: number,
 ): number {
+  const cellWidth = Math.floor(sourceWidth / columns);
+  const cellHeight = Math.floor(sourceHeight / gridRows);
+  const widthRemainder = sourceWidth % columns;
+  const heightRemainder = sourceHeight % gridRows;
+
+  // 余数合法性：每列/行至多吸收 1 像素（与 slotToRect 的"边缘吸收"语义一致）。
+  // 余数必然 < 列数 / 行数（取余定义），这里只是文档化断言，实际不会触发。
+  if (widthRemainder < 0 || heightRemainder < 0) {
+    throw new Error(`inplaceAtlas 内部错误：源图集尺寸为负（${sourceWidth}x${sourceHeight}）`);
+  }
+
   if (declared !== undefined) {
-    if (sourceWidth !== declared * columns || sourceHeight !== declared * gridRows) {
+    // 显式模式：declared 必须等于基准尺寸（不含余数）。
+    // 真实 TTS 4096/5=819.2，declared 应是 819 而不是 820——
+    // 余数吸收由 slotToRect 处理，不是 declared 的职责。
+    if (declared !== cellWidth || declared !== cellHeight) {
       throw new PackError(
         "INPLACE_GRID_MISMATCH",
         t("error.pack.inplaceGridMismatch", {
           detail:
-            `sheet ${sheetId}：源图集 ${sourceWidth}x${sourceHeight} 与单格 ${declared} × ` +
-            `网格 ${columns}x${gridRows} 不符（期望 ${declared * columns}x${declared * gridRows}）`,
+            `sheet ${sheetId}：源图集 ${sourceWidth}x${sourceHeight} 按 ${columns}x${gridRows} ` +
+            `切分的基准格子 ${cellWidth}x${cellHeight}（余数 ${widthRemainder}/${heightRemainder}）` +
+            `与显式 cellSize ${declared} 不符`,
         }),
       );
     }
     return declared;
   }
-  if (sourceWidth % columns !== 0 || sourceHeight % gridRows !== 0) {
-    throw new PackError(
-      "INPLACE_GRID_MISMATCH",
-      t("error.pack.inplaceGridMismatch", {
-        detail:
-          `sheet ${sheetId}：源图集 ${sourceWidth}x${sourceHeight} 不能被网格 ` +
-          `${columns}x${gridRows} 整除，无法推断单格尺寸`,
-      }),
-    );
-  }
-  const cellWidth = sourceWidth / columns;
-  const cellHeight = sourceHeight / gridRows;
+
+  // 推断模式：基准必须是方格（余数吸收不改变基准的形状）。
   if (cellWidth !== cellHeight) {
     throw new PackError(
       "INPLACE_GRID_MISMATCH",
       t("error.pack.inplaceGridMismatch", {
         detail:
           `sheet ${sheetId}：源图集 ${sourceWidth}x${sourceHeight} 按 ${columns}x${gridRows} ` +
-          `切分的格子 ${cellWidth}x${cellHeight} 不是正方形`,
+          `切分的基准格子 ${cellWidth}x${cellHeight} 不是正方形`,
       }),
     );
   }
@@ -325,6 +338,7 @@ async function rebuildSheet(
   if (sourceWidth === undefined || sourceHeight === undefined) {
     throw new Error(`源图集尺寸无法读取：${sourcePath}`);
   }
+  // cellSize 是基准尺寸（不含余数吸收）；余数由 slotToRect 在拼回时逐格处理
   const cell = resolveCellSize(opts.cellSize, sourceWidth, sourceHeight, columns, gridRows, sheetId);
 
   // 一次解码源图集为 8bit RGBA 原始像素（未改格子从这里切原像素，整图只解码一次）
@@ -361,16 +375,28 @@ async function rebuildSheet(
     }
 
     const cardBuffer = await readFile(cardPath);
-    const cardMeta = await sharp(cardBuffer).metadata();
-    const cardWidth = cardMeta.width;
-    const cardHeight = cardMeta.height;
-    if (cardWidth !== cell || cardHeight !== cell) {
+    let cardWidth: number | undefined;
+    let cardHeight: number | undefined;
+    try {
+      const cardMeta = await sharp(cardBuffer).metadata();
+      cardWidth = cardMeta.width;
+      cardHeight = cardMeta.height;
+    } catch {
+      // sharp 解析失败（损坏 / 非图片格式）：落到下面的闸门统一报 INPLACE_CELL_SIZE_MISMATCH
+      cardWidth = undefined;
+      cardHeight = undefined;
+    }
+    // 卡图尺寸闸门（Stage 3 修订）：只拦截"明显损坏"的输入（尺寸缺失 / 0 像素 / 无法解析）。
+    // 不再做强宽高比校验——下面 resize 步骤会精确铺满 slotToRect 算出的格子，
+    // 变形与否是用户的选择（slice 切的卡图已是 slotToRect 输出，零变形；
+    // 新做的卡图是任意尺寸，resize 拉伸是预期行为）。
+    if (cardWidth === undefined || cardHeight === undefined || cardWidth < 1 || cardHeight < 1) {
       throw new PackError(
         "INPLACE_CELL_SIZE_MISMATCH",
         t("error.pack.inplaceCellSizeMismatch", {
           cardId: row.cardId,
           path: cardPath,
-          expected: `${cell}x${cell}`,
+          expected: "尺寸 ≥ 1x1 且可读",
           actual: `${String(cardWidth)}x${String(cardHeight)}`,
         }),
       );
@@ -380,23 +406,29 @@ async function rebuildSheet(
   }
 
   // 第二步：全部 cols×rows 个格子按 1 基 slot 逐格 composite——
-  // 判改的格子放卡图，其余格子（含 csv 未列出的，共享图集语义见头注释）
-  // 从源像素切出原样回贴（png 无损中转）
+  // 判改的格子放卡图（resize 到该 slot 实际尺寸），其余格子（含 csv 未列出的，
+  // 共享图集语义见头注释）从源像素切出原样回贴（png 无损中转）。
+  // Stage 3 修订：用 slotToRect 算每个 slot 的实际位置/尺寸（含余数吸收），
+  // 而不是统一 cell*col——这样源图集 4096x4096 配 5x5 网格（单格 819.2）能正确拼回。
   for (let slot = 1; slot <= columns * gridRows; slot++) {
-    // 1 基 slot → 0 基格点（单一来源 cardid.ts 的 slotToGrid，绝不发明 0 基索引）
-    const grid = slotToGrid(slot, columns);
-    const left = grid.col * cell;
-    const top = grid.row * cell;
+    const rect = slotToRect(slot, sourceWidth, sourceHeight, columns, gridRows);
     const override = overrides.get(slot);
     if (override !== undefined) {
-      composites.push({ input: override, left, top });
+      // 改过的卡图：resize 到该 slot 实际尺寸（slice 切出的余数图会被拉回基准，
+      // 新做的卡图会被精确铺满）；
+      const resized = await sharp(override)
+        .resize(rect.width, rect.height, { fit: "fill" })
+        .png()
+        .toBuffer();
+      composites.push({ input: resized, left: rect.left, top: rect.top });
       continue;
     }
-    const cellRaw = sliceCellRaw(sourcePixels.data, rawWidth, left, top, cell, cell);
-    const cellPng = await sharp(cellRaw, { raw: { width: cell, height: cell, channels: 4 } })
+    // 未改的格子：从源像素切出该 slot 的实际区域（含余数吸收的 1 像素）
+    const cellRaw = sliceCellRaw(sourcePixels.data, rawWidth, rect.left, rect.top, rect.width, rect.height);
+    const cellPng = await sharp(cellRaw, { raw: { width: rect.width, height: rect.height, channels: 4 } })
       .png()
       .toBuffer();
-    composites.push({ input: cellPng, left, top });
+    composites.push({ input: cellPng, left: rect.left, top: rect.top });
   }
 
   // 透明画布为底 + 全部格子 composite（理由见模块头注释：半透明不混底）

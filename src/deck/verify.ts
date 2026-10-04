@@ -439,10 +439,21 @@ async function verifyDeckCards(
     }
     const cellWidth = meta.width / cols;
     const cellHeight = meta.height / rowCount;
-    if (!Number.isInteger(cellWidth) || !Number.isInteger(cellHeight) || cellWidth !== cellHeight) {
+    // Stage 3 修订：余数吸收合法化——cellWidth/cellHeight 允许非整数，
+    // 但基准（floor）必须相等（方格）；余数 < 列数/行数（每列/行至多吸收 1 像素，
+    // 与 slotToRect 的"边缘吸收"语义一致）。真实 TTS 图集（4096/5=819.2）的
+    // 合法形态，与 slice/generate/inplace 的余数吸收机制对齐。
+    const baseW = Math.floor(cellWidth);
+    const baseH = Math.floor(cellHeight);
+    const remainderW = meta.width % cols;
+    const remainderH = meta.height % rowCount;
+    const isSquare = baseW === baseH;
+    const remainderOk = remainderW >= 0 && remainderW < cols && remainderH >= 0 && remainderH < rowCount;
+    if (!isSquare || !remainderOk) {
       out.error(
         "ATLAS_GRID_MISMATCH",
-        `sheet ${sheetId} 图集实际 ${meta.width}x${meta.height}，按声明 ${cols}x${rowCount} 切出的单格为 ${cellWidth}x${cellHeight}（应为相等整数值的方格）`,
+        `sheet ${sheetId} 图集实际 ${meta.width}x${meta.height}，按声明 ${cols}x${rowCount} ` +
+        `切出的基准单格为 ${baseW}x${baseH}（余数 ${remainderW}/${remainderH}）——基准不是方格`,
         atlasPath,
       );
     }

@@ -579,9 +579,13 @@ describe('inplaceAtlas 错误路径', () => {
     );
   });
 
-  it('mtime 判改但卡图尺寸不符（50x50 ≠ cell 100）→ INPLACE_CELL_SIZE_MISMATCH', async () => {
+  it('mtime 判改但卡图损坏（不是合法图片）→ INPLACE_CELL_SIZE_MISMATCH', async () => {
     await setupStandardSheet();
-    await writeCardPng(10101, 50, NEW_MTIME); // 尺寸错的卡图（mtime 新 → 判为改过）
+    // 损坏的卡图（mtime 新 → 判为改过，但 sharp 解析失败）
+    const cardFile = path.join(deckDir, 'card_10101.png');
+    await writeFile(cardFile, Buffer.from('not a png'));
+    const stat = await import('node:fs/promises').then(m => m.stat(cardFile));
+    expect(stat.mtimeMs).toBeGreaterThan(0);
 
     const err = await expectInplaceError(
       () => runInplace(),
@@ -589,18 +593,19 @@ describe('inplaceAtlas 错误路径', () => {
       'error.pack.inplaceCellSizeMismatch',
       '10101',
     );
-    expect(err.message === 'error.pack.inplaceCellSizeMismatch' || err.message.includes('50x50')).toBe(true);
+    expect(err.message === 'error.pack.inplaceCellSizeMismatch' || err.message.includes('10101')).toBe(true);
   });
 
-  it('显式模式卡图尺寸不符 → INPLACE_CELL_SIZE_MISMATCH', async () => {
+  it('显式模式卡图损坏 → INPLACE_CELL_SIZE_MISMATCH', async () => {
     await setupStandardSheet();
-    await writeCardPng(10104, 30, OLD_MTIME); // mtime 旧，但显式声明改过 → 仍会校验尺寸
+    // 损坏的卡图（显式声明改过 → 仍会校验）
+    await writeFile(path.join(deckDir, 'card_10104.png'), Buffer.from('not a png'));
 
     await expectInplaceError(
       () => runInplace([10104]),
       'INPLACE_CELL_SIZE_MISMATCH',
       'error.pack.inplaceCellSizeMismatch',
-      '30x30',
+      '10104',
     );
   });
 
@@ -632,8 +637,9 @@ describe('inplaceAtlas 错误路径', () => {
     );
   });
 
-  it('推断模式：源图集高不能被 sheet_rows 整除 → INPLACE_GRID_MISMATCH', async () => {
-    // 300x201（3x2）：201 % 2 ≠ 0
+  it('推断模式：源图集基准方格但行余数吸收（300x201 配 3x2，cellW=cellH=100，余数 1 行）→ 拼回成功', async () => {
+    // Stage 3 修订：300x201 配 3x2，cellW=100, cellH=floor(201/2)=100，基准方；
+    // 行余数 1 由 slotToRect 吸收到最后一行。这是真实 TTS 图集的合法形态（如 4096/5=819.2）。
     const raw = Buffer.alloc(300 * 201 * 4);
     await writeFile(
       path.join(sourceDir, 'sheet-1.png'),
@@ -641,12 +647,14 @@ describe('inplaceAtlas 错误路径', () => {
     );
     await writeStandardCsv(1);
 
-    await expectInplaceError(
-      () => runInplace(),
-      'INPLACE_GRID_MISMATCH',
-      'error.pack.inplaceGridMismatch',
-      '300x201',
-    );
+    const result = await runInplace();
+    expect(result.sheets).toHaveLength(1);
+    expect(result.sheets[0].columns).toBe(3);
+    expect(result.sheets[0].rows).toBe(2);
+    // 输出尺寸与源一致（含余数吸收的 1 像素行）
+    const outMeta = await sharp(result.sheets[0].filePath).metadata();
+    expect(outMeta.width).toBe(300);
+    expect(outMeta.height).toBe(201);
   });
 
   it('推断模式：格子非正方形（400x200 声明 2x2）→ INPLACE_GRID_MISMATCH', async () => {

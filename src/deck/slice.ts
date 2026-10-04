@@ -115,6 +115,7 @@ import sharp from "sharp";
 
 import { t } from "../i18n/index.js";
 import { PackError } from "../pack/packyaml.js";
+import { writeDeckManifest, type DeckManifest } from "../pack/manifest.js";
 
 import { CARDS_CSV_FILENAME, writeCardsCsv, type CardRow } from "./cards.js";
 import { cardIdToKey, cardIdToSlot, isValidCardId, slotToCardId } from "./cardid.js";
@@ -1034,6 +1035,17 @@ export async function sliceAtlas(opts: SliceOptions): Promise<SliceResult> {
   });
   const cardsCsvPath = path.join(opts.outDir, CARDS_CSV_FILENAME);
   await writeCardsCsv(opts.outDir, rows);
+
+  // 落 deck.yaml：schema_version/name/guid/shared_with（B2 主窗口裁决后不再含 cards[]）
+  // Stage 3 补：Run 1 GLM 遗漏了这一步——方案设计 §2B.3 明确要求
+  // "在 deck.yaml 里写 shared_with: [<其他 GUID>]"，否则后续改 URL 时无法联动。
+  const deckManifest: DeckManifest = {
+    schema_version: 1,
+    name: candidate.nickname ?? candidate.deckKey,
+    guid: candidate.guid,
+    shared_with: sharedWith,
+  };
+  await writeDeckManifest(opts.outDir, deckManifest);
 
   return {
     cardsSliced: rows.length,

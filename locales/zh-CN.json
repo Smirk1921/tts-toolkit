@@ -83,6 +83,56 @@
           }
         }
       },
+      "deck": {
+        "description": "图集切片 / 拼接 / 原位拼回 / 替换计划 / 校验",
+        "slice": {
+          "description": "按存档归属把图集切成卡图并登记 cards.csv",
+          "option": {
+            "sheet": "图集大图文件路径（PNG/JPG/WebP）",
+            "save": "存档 JSON 路径（用于解析图集归属）",
+            "deckKey": "显式指定 CustomDeck key（如 101）",
+            "deckGuid": "显式指定牌堆对象 GUID",
+            "out": "输出目录（切片产物与 cards.csv 落盘处）"
+          }
+        },
+        "generate": {
+          "description": "把 cards.csv + 卡图重新排版拼成图集大图",
+          "option": {
+            "deck": "deck 目录（含 cards.csv 与卡图）",
+            "out": "输出目录（默认 <deck 目录>/source）",
+            "cellSize": "单张卡图边长像素（默认 512）",
+            "atlasSize": "图集边长：512 / 1024 / 2048 / 4096（默认 4096）",
+            "cols": "网格列数 [1,10]（必须与 --rows 同时给出）",
+            "rows": "网格行数 [1,7]（必须与 --cols 同时给出）"
+          }
+        },
+        "inplace": {
+          "description": "把改过的卡图按 cards.csv 的原位置拼回源图集",
+          "option": {
+            "deck": "deck 目录（含 cards.csv 与卡图）",
+            "source": "源图集目录（含 sheet-<id>.png 原始图集）",
+            "out": "输出目录（默认与 --source 相同，原地回写）",
+            "cellSize": "单格边长像素（默认从源图集尺寸推断）",
+            "modified": "只替换这些 CardID，逗号分隔（省略则按卡图 mtime 判断）"
+          }
+        },
+        "plan": {
+          "description": "预览 URL 替换计划（dry-run，不写任何文件）",
+          "option": {
+            "save": "存档 JSON 路径",
+            "replace": "替换规则，格式 <from>=<to>",
+            "mode": "匹配模式：exact（默认）/ prefix / regex"
+          }
+        },
+        "verify": {
+          "description": "校验图包工作区（网格 / CMYK / CardID / 父子一致 / 共享图集）",
+          "option": {
+            "root": "图包根目录",
+            "cmyk": "跳过 CMYK 色彩空间检查",
+            "atlasSize": "跳过图集尺寸与网格一致性检查"
+          }
+        }
+      },
       "pull": {
         "description": "从当前存档拉取全部 Lua 脚本与 UI 界面到目录",
         "argument": {
@@ -137,7 +187,16 @@
       "init": {
         "done": "图包工作区已创建于 {dir}",
         "lfsConfirmDisable": "确定禁用 lfs？改 10 轮可能几十 GB (y/N):",
-        "lfsPrompt": "未检测到 git-lfs。图包图片是二进制，不用 lfs 改 10 轮可能几十 GB。\n  1. 安装 git-lfs（推荐）\n  2. 禁用 lfs（不推荐）\n  3. 取消\n请选择 [1/2/3]:"
+        "lfsPrompt": "请输入编号后回车（1-3，直接回车取消）：",
+        "lfsPromptTitle": "未检测到 git-lfs。图包图片是二进制，不用 lfs 改 10 轮可能几十 GB。",
+        "lfsOptionInstall": "  1. 安装 git-lfs（推荐）：{url}",
+        "lfsOptionDisable": "  2. 禁用 lfs（不推荐）",
+        "lfsOptionCancel": "  3. 取消",
+        "lfsInvalidChoice": "输入无效：请输入 1 到 {max} 之间的编号",
+        "lfsDisableConfirm": "确定禁用？改 10 轮可能几十 GB (y/N)",
+        "lfsInstallHint": "请先安装 git-lfs（{url}），然后重新运行 tts pack init 完成初始化",
+        "lfsCancelled": "已取消：图包初始化未完成（尚未写入 pack.yaml），重新运行 tts pack init 可继续",
+        "lfsNonInteractive": "未检测到 git-lfs，且当前不是交互式终端：已按 disabled-no-lfs 禁用 lfs。图包图片是二进制，不用 lfs 改 10 轮可能几十 GB，建议安装 git-lfs（{url}）后重新初始化"
       },
       "pull": {
         "done": "已拉取 {scripts} 脚本 / {ui} UI，跳过 {skipped} 项（与本地一致）"
@@ -148,6 +207,34 @@
       "unpack": {
         "done": "已从 {save} 解包到 {outDir}：{scripts} 脚本，{ui} UI，{objects} 对象"
       }
+    },
+    "deck": {
+      "slice": {
+        "done": "切片完成：{cards} 张卡 → {outDir}{shared}",
+        "shared": "（共享图集：{guids}）",
+        "candidate": "[{index}] GUID={guid}{nickname} (NumWidth={numWidth}, NumHeight={numHeight})",
+        "prompt": "图集被多个牌堆引用，请选择：",
+        "invalidChoice": "输入无效：请输入 1 到 {max} 之间的编号",
+        "cancelled": "已取消选择（未选中任何候选）"
+      },
+      "generate": {
+        "done": "拼接完成：{cards} 张卡 → {sheetCount} 张图集（{sheets}）",
+        "doneEmpty": "拼接完成：{cards} 张卡 → 0 张图集"
+      },
+      "inplace": {
+        "done": "原位拼回完成：改 {modified} 张 / 共 {total} 张",
+        "invalidModified": "--modified 需要逗号分隔的正整数 CardID（收到 {value}）"
+      },
+      "plan": {
+        "done": "替换计划：影响 {affected} 处 / 涉及 {objects} 个对象",
+        "invalidReplace": "--replace 的格式必须是 <from>=<to>（收到 {value}）",
+        "invalidMode": "--mode 只接受 exact / prefix / regex（收到 {mode}）"
+      },
+      "verify": {
+        "done": "校验通过",
+        "summary": "校验发现 {errors} 错 {warnings} 警"
+      },
+      "invalidNumber": "{option} 需要正整数（收到 {value}）"
     },
     "pull": {
       "done": "拉取完成：脚本 {scripts} 个，UI 界面 {ui} 个",
@@ -228,8 +315,155 @@
     "pack": {
       "atlasTooManyCells": "需要 {minCells} 个格子，超过单张图集的上限 {maxSlots} 格",
       "atlasGridTooFine": "图集 {imageWidth}x{imageHeight} 按 {columns}x{rows} 网格切分后单格宽或高为 0",
-      "atlasInvalidGrid": "图集网格声明不合法：{detail}"
-    }
+      "atlasInvalidGrid": "图集网格声明不合法：{detail}",
+      "notFound": "未找到 pack.yaml：{path}",
+      "readFailed": "pack.yaml 读取失败：{path}（{detail}）",
+      "invalidYaml": "pack.yaml 不是合法 YAML：{path}（{detail}）",
+      "invalid": "pack.yaml 校验失败：{path}（{issues}）",
+      "invalidWriteData": "pack 数据不符合 schema，拒绝写入：{issues}",
+      "writeFailed": "pack.yaml 写入失败：{path}（{detail}）",
+      "deckNotFound": "未找到 deck.yaml：{path}",
+      "deckReadFailed": "deck.yaml 读取失败：{path}（{detail}）",
+      "deckInvalidYaml": "deck.yaml 不是合法 YAML：{path}（{detail}）",
+      "deckInvalid": "deck.yaml 校验失败：{path}（{issues}）",
+      "deckInvalidWriteData": "deck 数据不符合 schema，拒绝写入：{issues}",
+      "deckWriteFailed": "deck.yaml 写入失败：{path}（{detail}）",
+      "assetsReadFailed": "assets.yaml 读取失败：{path}（{detail}）",
+      "assetsInvalidYaml": "assets.yaml 不是合法 YAML：{path}（{detail}）",
+      "assetsInvalid": "assets.yaml 校验失败：{path}（{issues}）",
+      "assetsInvalidWriteData": "素材数据不符合 schema，拒绝写入：{issues}",
+      "assetsWriteFailed": "assets.yaml 写入失败：{path}（{detail}）",
+      "cardsNotFound": "cards.csv 不存在：{path}",
+      "cardsReadFailed": "cards.csv 读取失败：{path}（{detail}）",
+      "cardsWriteFailed": "cards.csv 写入失败：{path}（{detail}）",
+      "cardsInvalid": "cards.csv 内容无效：{detail}",
+      "cardsDuplicateId": "cards.csv 存在重复 card_id：{cardId}（首次第 {firstRow} 行，重复第 {dupRow} 行）",
+      "cardsDuplicateSlot": "图集 {sheetId} 内 slot 重复：{slot}（首次第 {firstRow} 行，重复第 {dupRow} 行）",
+      "cardsSlotMismatch": "第 {row} 行 card_id {cardId} 的 slot 不匹配：实际 {slot}，应为 {expected}",
+      "cardsSlotOutOfRange": "第 {row} 行 slot 超出网格容量：{slot}（上限 {max}）",
+      "cardsInvalidGrid": "第 {row} 行网格声明无效：{sheetCols}x{sheetRows}",
+      "generateCardsNotFound": "缺少 cards.csv，无法拼接：{path}",
+      "generateCardFileMissing": "cards.csv 引用的卡图缺失：{path}",
+      "generateCellSizeMismatch": "卡图尺寸与 --cell-size 不符：{path}（期望 {expected}，实际 {actual}）",
+      "generateGridInvalid": "网格参数无效：{detail}",
+      "generateTooManyCards": "需要 {minCells} 个格子，超过单张图集的上限 {maxSlots} 格",
+      "inplaceCardsNotFound": "缺少 cards.csv，无法原位拼回：{path}",
+      "inplaceSourceMissing": "源图集缺失：{path}",
+      "inplaceCellSizeMismatch": "卡图尺寸与格子尺寸不符：{cardId}（{path}，期望 {expected}，实际 {actual}）",
+      "inplaceGridMismatch": "源图集尺寸与网格声明不符：{detail}",
+      "planSaveInvalid": "存档不可用：{path}（{detail}）",
+      "planRuleInvalid": "替换规则无效：{detail}",
+      "sliceSheetNotFound": "图集文件不存在：{path}",
+      "sliceBackSheetNotFound": "背面图集文件不存在：{path}",
+      "sliceSaveInvalid": "存档无效：{path}（{detail}）",
+      "sliceSaveInconsistent": "存档与工作区不一致：{detail}",
+      "sliceOrphanAtlas": "存档中没有引用该图集的牌堆：{sheet}",
+      "sliceAmbiguous": "图集被 {count} 个牌堆引用，无法自动确定归属：{candidates}",
+      "sliceDeckNotFound": "找不到指定的牌堆：{target}",
+      "sliceGridMismatch": "图集尺寸与网格声明不匹配：{imageWidth}x{imageHeight}，声明 {columns}x{rows}",
+      "sliceImageInvalid": "图集图片无效：{path}（{detail}）",
+      "build": {
+        "skeletonMissing": "缺少骨架存档，请先运行 tts pack unpack：{path}",
+        "skeletonInvalid": "骨架存档不是合法 JSON：{path}（{detail}）",
+        "guidMismatch": "data.json 的 GUID 与对象目录名不一致：{path}（期望 {expected}，实际 {actual}）",
+        "failed": "构建失败：{detail}"
+      },
+      "diff": {
+        "scanFailed": "扫描目录失败：{path}（{detail}）",
+        "readFailed": "读取文件失败：{path}（{detail}）"
+      },
+      "exists": "初始化目标已是图包工作区（已存在 pack.yaml）：{path}",
+      "gitInitFailed": "git 仓库初始化失败：{detail}",
+      "lfsInstallFailed": "git lfs install 失败：{detail}",
+      "unpack": {
+        "inputMissing": "输入文件不存在：{path}",
+        "saveInvalid": "存档 JSON 无效：{path}（{detail}）",
+        "ttsmodNotZip": ".ttsmod 不是合法 ZIP：{path}",
+        "ttsmodExtractFailed": ".ttsmod 解压失败：{path}（{detail}）",
+        "ttsmodNoSave": ".ttsmod 内未找到存档 JSON：{path}",
+        "failed": "解包失败：{detail}"
+      },
+      "pull": {
+        "failed": "拉取失败：{detail}"
+      },
+      "push": {
+        "failed": "推送失败：{detail}"
+      }
+    },
+    "ATLAS_TOO_MANY_CELLS": "图集网格所需格数超出上限：{msg}",
+    "ATLAS_GRID_TOO_FINE": "图集网格过细，单格宽或高为 0：{msg}",
+    "ATLAS_INVALID_GRID": "图集网格声明无效：{msg}",
+    "CARDS_NOT_FOUND": "cards.csv 不存在：{msg}",
+    "CARDS_READ_FAILED": "cards.csv 读取失败：{msg}",
+    "CARDS_WRITE_FAILED": "cards.csv 写入失败：{msg}",
+    "CARDS_INVALID": "cards.csv 内容无效：{msg}",
+    "CARDS_DUPLICATE_ID": "cards.csv 存在重复 card_id：{msg}",
+    "CARDS_SLOT_MISMATCH": "card_id 与 slot 不匹配：{msg}",
+    "CARDS_SLOT_OUT_OF_RANGE": "slot 超出网格容量：{msg}",
+    "CARDS_INVALID_GRID": "cards.csv 的网格声明无效：{msg}",
+    "CARDS_DUPLICATE_SLOT": "同一图集内 slot 重复：{msg}",
+    "OBJECTS_NOT_FOUND": "objects.csv 不存在：{msg}",
+    "OBJECTS_READ_FAILED": "objects.csv 读取失败：{msg}",
+    "OBJECTS_WRITE_FAILED": "objects.csv 写入失败：{msg}",
+    "OBJECTS_INVALID": "objects.csv 内容无效：{msg}",
+    "OBJECTS_DUPLICATE_ID": "objects.csv 存在重复 asset_id：{msg}",
+    "SLICE_SHEET_NOT_FOUND": "图集文件不存在：{msg}",
+    "SLICE_SAVE_INVALID": "存档无效：{msg}",
+    "SLICE_ORPHAN_ATLAS": "存档中没有引用该图集的牌堆：{msg}",
+    "SLICE_AMBIGUOUS": "图集被多个牌堆引用，无法自动确定归属：{msg}",
+    "SLICE_DECK_NOT_FOUND": "找不到指定的牌堆：{msg}",
+    "SLICE_GRID_MISMATCH": "图集尺寸与网格声明不匹配：{msg}",
+    "SLICE_IMAGE_INVALID": "图集图片无效：{msg}",
+    "GENERATE_CARDS_NOT_FOUND": "缺少 cards.csv，无法拼接：{msg}",
+    "GENERATE_CARD_FILE_MISSING": "cards.csv 引用的卡图缺失：{msg}",
+    "GENERATE_CELL_SIZE_MISMATCH": "卡图尺寸与 --cell-size 不符：{msg}",
+    "GENERATE_GRID_INVALID": "网格参数无效：{msg}",
+    "GENERATE_TOO_MANY_CARDS": "卡数超出单张图集上限：{msg}",
+    "INPLACE_CARDS_NOT_FOUND": "缺少 cards.csv，无法原位拼回：{msg}",
+    "INPLACE_SOURCE_MISSING": "源图集缺失：{msg}",
+    "INPLACE_CELL_SIZE_MISMATCH": "卡图尺寸与格子尺寸不符：{msg}",
+    "INPLACE_GRID_MISMATCH": "源图集尺寸与网格声明不符：{msg}",
+    "PLAN_SAVE_INVALID": "存档不可用：{msg}",
+    "PLAN_RULE_INVALID": "替换规则无效：{msg}",
+    "objects": {
+      "notFound": "objects.csv 不存在：{path}",
+      "readFailed": "objects.csv 读取失败：{path}（{detail}）",
+      "invalid": "objects.csv 内容无效：{path}（{detail}）",
+      "duplicateId": "objects.csv 存在重复 asset_id：{path}（{assetId}）",
+      "writeFailed": "objects.csv 写入失败：{path}（{detail}）"
+    },
+    "ASSETS_INVALID": "assets.yaml 校验失败：{msg}",
+    "ASSETS_READ_FAILED": "assets.yaml 读取失败：{msg}",
+    "ASSETS_WRITE_FAILED": "assets.yaml 写入失败：{msg}",
+    "BUILD_FAILED": "构建图包失败：{msg}",
+    "DECK_INVALID": "deck.yaml 校验失败：{msg}",
+    "DECK_NOT_FOUND": "未找到 deck.yaml：{msg}",
+    "DECK_READ_FAILED": "deck.yaml 读取失败：{msg}",
+    "DECK_WRITE_FAILED": "deck.yaml 写入失败：{msg}",
+    "DIFF_FAILED": "对比失败：{msg}",
+    "GIT_LFS_INSTALL_FAILED": "git lfs install 失败：{msg}",
+    "GUID_MISMATCH": "GUID 不一致：{msg}",
+    "PACK_READ_FAILED": "pack.yaml 读取失败：{msg}",
+    "PACK_WRITE_FAILED": "pack.yaml 写入失败：{msg}",
+    "PULL_FAILED": "拉取失败：{msg}",
+    "PUSH_FAILED": "推送失败：{msg}",
+    "SKELETON_INVALID": "骨架存档无效：{msg}",
+    "ATLAS_CMYK": "图集是 CMYK 色彩空间（TTS 不支持）：{msg}",
+    "ATLAS_GRID_MISMATCH": "图集网格不一致：{msg}",
+    "ATLAS_UNREADABLE": "图集无法读取或尺寸非法：{msg}",
+    "CARD_CMYK": "卡图是 CMYK 色彩空间（TTS 不支持）：{msg}",
+    "CARD_ID_MISMATCH": "CardID 与 slot 不匹配：{msg}",
+    "CARD_IMAGE_MISSING": "卡图文件不存在：{msg}",
+    "CARD_IMAGE_UNREADABLE": "卡图无法读取：{msg}",
+    "DECK_EMPTY_SLOT": "图集存在空白格：{msg}",
+    "DECK_TOO_MANY_CARDS": "卡数超出网格容量：{msg}",
+    "LANG_VARIANT_MALFORMED": "语言变体格式被破坏：{msg}",
+    "LANG_VARIANT_SUSPECT": "普通 URL 中出现语言变体段（疑似损坏）：{msg}",
+    "OBJECT_FILE_MISSING": "objects.csv 引用的文件不存在：{msg}",
+    "PARENT_CHILD_DECK_MISMATCH": "父牌堆与子对象的 CustomDeck 不一致：{msg}",
+    "SHARED_ATLAS_NOT_DECLARED": "共享图集未在 deck.yaml 声明：{msg}",
+    "SHEET_SOURCE_MISSING": "图集源文件缺失：{msg}",
+    "SKELETON_UNREADABLE": "骨架存档读取失败：{msg}"
   },
   "common": {
     "yes": "是",

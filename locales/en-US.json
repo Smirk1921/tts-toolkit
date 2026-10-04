@@ -83,6 +83,56 @@
           }
         }
       },
+      "deck": {
+        "description": "Atlas slicing / generation / in-place rebuild / replace plan / verification",
+        "slice": {
+          "description": "Slice an atlas into card images and register cards.csv using save ownership",
+          "option": {
+            "sheet": "Atlas image path (PNG/JPG/WebP)",
+            "save": "Save JSON path (used to resolve atlas ownership)",
+            "deckKey": "Explicit CustomDeck key (e.g. 101)",
+            "deckGuid": "Explicit deck object GUID",
+            "out": "Output directory (card images and cards.csv)"
+          }
+        },
+        "generate": {
+          "description": "Re-layout cards.csv + card images into atlas sheets",
+          "option": {
+            "deck": "Deck directory (cards.csv and card images)",
+            "out": "Output directory (default <deck dir>/source)",
+            "cellSize": "Card image edge in pixels (default 512)",
+            "atlasSize": "Atlas edge: 512 / 1024 / 2048 / 4096 (default 4096)",
+            "cols": "Grid columns [1,10] (must be given with --rows)",
+            "rows": "Grid rows [1,7] (must be given with --cols)"
+          }
+        },
+        "inplace": {
+          "description": "Put modified card images back at their original atlas positions",
+          "option": {
+            "deck": "Deck directory (cards.csv and card images)",
+            "source": "Source atlas directory (sheet-<id>.png originals)",
+            "out": "Output directory (defaults to --source, writes in place)",
+            "cellSize": "Cell edge in pixels (default inferred from source atlas)",
+            "modified": "Replace only these CardIDs, comma separated (default: card mtime)"
+          }
+        },
+        "plan": {
+          "description": "Preview a URL replace plan (dry-run; writes nothing)",
+          "option": {
+            "save": "Save JSON path",
+            "replace": "Replace rule in <from>=<to> form",
+            "mode": "Match mode: exact (default) / prefix / regex"
+          }
+        },
+        "verify": {
+          "description": "Verify a pack workspace (grid / CMYK / CardID / parent-child / shared atlas)",
+          "option": {
+            "root": "Pack root directory",
+            "cmyk": "Skip the CMYK colour space check",
+            "atlasSize": "Skip the atlas size / grid consistency check"
+          }
+        }
+      },
       "pull": {
         "description": "Pull all Lua scripts and UI files from the current save into a directory",
         "argument": {
@@ -137,7 +187,16 @@
       "init": {
         "done": "Pack workspace created at {dir}",
         "lfsConfirmDisable": "Really disable lfs? 10 edits may cost tens of GB (y/N):",
-        "lfsPrompt": "git-lfs not detected. Pack images are binary; without lfs, 10 edits may cost tens of GB.\n  1. Install git-lfs (recommended)\n  2. Disable lfs (not recommended)\n  3. Cancel\nChoose [1/2/3]:"
+        "lfsPrompt": "Enter a number and press Enter (1-3; press Enter to cancel):",
+        "lfsPromptTitle": "git-lfs not detected. Pack images are binary; without lfs, 10 edits may cost tens of GB.",
+        "lfsOptionInstall": "  1. Install git-lfs (recommended): {url}",
+        "lfsOptionDisable": "  2. Disable lfs (not recommended)",
+        "lfsOptionCancel": "  3. Cancel",
+        "lfsInvalidChoice": "Invalid input: enter a number between 1 and {max}",
+        "lfsDisableConfirm": "Really disable? 10 edits may cost tens of GB (y/N)",
+        "lfsInstallHint": "Install git-lfs first ({url}), then re-run tts pack init to finish initialization",
+        "lfsCancelled": "Cancelled: pack initialization did not finish (pack.yaml not written); re-run tts pack init to continue",
+        "lfsNonInteractive": "git-lfs not detected and this is not an interactive terminal: lfs disabled as disabled-no-lfs. Pack images are binary; without lfs, 10 edits may cost tens of GB. Install git-lfs ({url}) and re-initialize."
       },
       "pull": {
         "done": "Pulled {scripts} scripts / {ui} UIs; skipped {skipped} (unchanged)"
@@ -148,6 +207,34 @@
       "unpack": {
         "done": "Unpacked {save} to {outDir}: {scripts} scripts, {ui} UIs, {objects} objects"
       }
+    },
+    "deck": {
+      "slice": {
+        "done": "Sliced {cards} card(s) → {outDir}{shared}",
+        "shared": " (shared atlas: {guids})",
+        "candidate": "[{index}] GUID={guid}{nickname} (NumWidth={numWidth}, NumHeight={numHeight})",
+        "prompt": "The atlas is referenced by multiple decks; choose one:",
+        "invalidChoice": "Invalid input: enter a number between 1 and {max}",
+        "cancelled": "Selection cancelled (no candidate chosen)"
+      },
+      "generate": {
+        "done": "Generated {cards} card(s) into {sheetCount} atlas(es) ({sheets})",
+        "doneEmpty": "Generated {cards} card(s) into 0 atlases"
+      },
+      "inplace": {
+        "done": "In-place rebuild done: {modified} changed / {total} total",
+        "invalidModified": "--modified must be comma-separated positive CardIDs (got {value})"
+      },
+      "plan": {
+        "done": "Replace plan: {affected} location(s) / {objects} object(s)",
+        "invalidReplace": "--replace must be in <from>=<to> form (got {value})",
+        "invalidMode": "--mode accepts only exact / prefix / regex (got {mode})"
+      },
+      "verify": {
+        "done": "Verification passed",
+        "summary": "Verification found {errors} error(s) / {warnings} warning(s)"
+      },
+      "invalidNumber": "{option} must be a positive integer (got {value})"
     },
     "pull": {
       "done": "Pull complete: {scripts} script(s), {ui} UI file(s)",
@@ -228,8 +315,155 @@
     "pack": {
       "atlasTooManyCells": "Needs {minCells} cells, exceeding the single-atlas limit of {maxSlots}",
       "atlasGridTooFine": "Atlas {imageWidth}x{imageHeight} is too small for a {columns}x{rows} grid: a cell would be 0 pixels wide or tall",
-      "atlasInvalidGrid": "Invalid atlas grid declaration: {detail}"
-    }
+      "atlasInvalidGrid": "Invalid atlas grid declaration: {detail}",
+      "notFound": "pack.yaml not found: {path}",
+      "readFailed": "Failed to read pack.yaml: {path} ({detail})",
+      "invalidYaml": "pack.yaml is not valid YAML: {path} ({detail})",
+      "invalid": "pack.yaml validation failed: {path} ({issues})",
+      "invalidWriteData": "Pack data does not match the schema; refusing to write: {issues}",
+      "writeFailed": "Failed to write pack.yaml: {path} ({detail})",
+      "deckNotFound": "deck.yaml not found: {path}",
+      "deckReadFailed": "Failed to read deck.yaml: {path} ({detail})",
+      "deckInvalidYaml": "deck.yaml is not valid YAML: {path} ({detail})",
+      "deckInvalid": "deck.yaml validation failed: {path} ({issues})",
+      "deckInvalidWriteData": "Deck data does not match the schema; refusing to write: {issues}",
+      "deckWriteFailed": "Failed to write deck.yaml: {path} ({detail})",
+      "assetsReadFailed": "Failed to read assets.yaml: {path} ({detail})",
+      "assetsInvalidYaml": "assets.yaml is not valid YAML: {path} ({detail})",
+      "assetsInvalid": "assets.yaml validation failed: {path} ({issues})",
+      "assetsInvalidWriteData": "Assets data does not match the schema; refusing to write: {issues}",
+      "assetsWriteFailed": "Failed to write assets.yaml: {path} ({detail})",
+      "cardsNotFound": "cards.csv not found: {path}",
+      "cardsReadFailed": "Failed to read cards.csv: {path} ({detail})",
+      "cardsWriteFailed": "Failed to write cards.csv: {path} ({detail})",
+      "cardsInvalid": "Invalid cards.csv: {detail}",
+      "cardsDuplicateId": "Duplicate card_id in cards.csv: {cardId} (first at row {firstRow}, duplicate at row {dupRow})",
+      "cardsDuplicateSlot": "Duplicate slot in sheet {sheetId}: {slot} (first at row {firstRow}, duplicate at row {dupRow})",
+      "cardsSlotMismatch": "Row {row}: card_id {cardId} slot mismatch: got {slot}, expected {expected}",
+      "cardsSlotOutOfRange": "Row {row}: slot out of grid range: {slot} (max {max})",
+      "cardsInvalidGrid": "Row {row}: invalid grid declaration: {sheetCols}x{sheetRows}",
+      "generateCardsNotFound": "cards.csv is required for generation: {path}",
+      "generateCardFileMissing": "Card image referenced by cards.csv is missing: {path}",
+      "generateCellSizeMismatch": "Card image size does not match --cell-size: {path} (expected {expected}, got {actual})",
+      "generateGridInvalid": "Invalid grid parameters: {detail}",
+      "generateTooManyCards": "Needs {minCells} cells, exceeding the single-atlas limit of {maxSlots}",
+      "inplaceCardsNotFound": "cards.csv is required for in-place rebuild: {path}",
+      "inplaceSourceMissing": "Source atlas missing: {path}",
+      "inplaceCellSizeMismatch": "Card image size does not match the cell size: {cardId} ({path}, expected {expected}, got {actual})",
+      "inplaceGridMismatch": "Source atlas size does not match the declared grid: {detail}",
+      "planSaveInvalid": "Save unavailable: {path} ({detail})",
+      "planRuleInvalid": "Invalid replace rule: {detail}",
+      "sliceSheetNotFound": "Atlas file not found: {path}",
+      "sliceBackSheetNotFound": "Back atlas file not found: {path}",
+      "sliceSaveInvalid": "Invalid save: {path} ({detail})",
+      "sliceSaveInconsistent": "Save is inconsistent with the workspace: {detail}",
+      "sliceOrphanAtlas": "No deck in the save references this atlas: {sheet}",
+      "sliceAmbiguous": "Atlas is referenced by {count} decks; cannot resolve ownership: {candidates}",
+      "sliceDeckNotFound": "Specified deck not found: {target}",
+      "sliceGridMismatch": "Atlas size does not match the declared grid: {imageWidth}x{imageHeight}, declared {columns}x{rows}",
+      "sliceImageInvalid": "Invalid atlas image: {path} ({detail})",
+      "build": {
+        "skeletonMissing": "Skeleton save missing; run tts pack unpack first: {path}",
+        "skeletonInvalid": "Skeleton save is not valid JSON: {path} ({detail})",
+        "guidMismatch": "GUID in data.json does not match the object directory name: {path} (expected {expected}, got {actual})",
+        "failed": "Build failed: {detail}"
+      },
+      "diff": {
+        "scanFailed": "Failed to scan directory: {path} ({detail})",
+        "readFailed": "Failed to read file: {path} ({detail})"
+      },
+      "exists": "Target directory is already a pack workspace (pack.yaml exists): {path}",
+      "gitInitFailed": "git repository initialization failed: {detail}",
+      "lfsInstallFailed": "git lfs install failed: {detail}",
+      "unpack": {
+        "inputMissing": "Input file not found: {path}",
+        "saveInvalid": "Invalid save JSON: {path} ({detail})",
+        "ttsmodNotZip": ".ttsmod is not a valid ZIP: {path}",
+        "ttsmodExtractFailed": "Failed to extract .ttsmod: {path} ({detail})",
+        "ttsmodNoSave": "No save JSON found inside .ttsmod: {path}",
+        "failed": "Unpack failed: {detail}"
+      },
+      "pull": {
+        "failed": "Pull failed: {detail}"
+      },
+      "push": {
+        "failed": "Push failed: {detail}"
+      }
+    },
+    "ATLAS_TOO_MANY_CELLS": "Atlas grid needs too many cells: {msg}",
+    "ATLAS_GRID_TOO_FINE": "Atlas grid is too fine (a cell would be 0 pixels wide or tall): {msg}",
+    "ATLAS_INVALID_GRID": "Invalid atlas grid declaration: {msg}",
+    "CARDS_NOT_FOUND": "cards.csv not found: {msg}",
+    "CARDS_READ_FAILED": "Failed to read cards.csv: {msg}",
+    "CARDS_WRITE_FAILED": "Failed to write cards.csv: {msg}",
+    "CARDS_INVALID": "Invalid cards.csv: {msg}",
+    "CARDS_DUPLICATE_ID": "Duplicate card_id in cards.csv: {msg}",
+    "CARDS_SLOT_MISMATCH": "card_id does not match slot: {msg}",
+    "CARDS_SLOT_OUT_OF_RANGE": "slot exceeds grid capacity: {msg}",
+    "CARDS_INVALID_GRID": "Invalid grid declaration in cards.csv: {msg}",
+    "CARDS_DUPLICATE_SLOT": "Duplicate slot within a sheet: {msg}",
+    "OBJECTS_NOT_FOUND": "objects.csv not found: {msg}",
+    "OBJECTS_READ_FAILED": "Failed to read objects.csv: {msg}",
+    "OBJECTS_WRITE_FAILED": "Failed to write objects.csv: {msg}",
+    "OBJECTS_INVALID": "Invalid objects.csv: {msg}",
+    "OBJECTS_DUPLICATE_ID": "Duplicate asset_id in objects.csv: {msg}",
+    "SLICE_SHEET_NOT_FOUND": "Atlas file not found: {msg}",
+    "SLICE_SAVE_INVALID": "Invalid save: {msg}",
+    "SLICE_ORPHAN_ATLAS": "No deck in the save references this atlas: {msg}",
+    "SLICE_AMBIGUOUS": "Atlas is referenced by multiple decks; cannot resolve ownership: {msg}",
+    "SLICE_DECK_NOT_FOUND": "Specified deck not found: {msg}",
+    "SLICE_GRID_MISMATCH": "Atlas size does not match the declared grid: {msg}",
+    "SLICE_IMAGE_INVALID": "Invalid atlas image: {msg}",
+    "GENERATE_CARDS_NOT_FOUND": "cards.csv is required for generation: {msg}",
+    "GENERATE_CARD_FILE_MISSING": "Card image referenced by cards.csv is missing: {msg}",
+    "GENERATE_CELL_SIZE_MISMATCH": "Card image size does not match --cell-size: {msg}",
+    "GENERATE_GRID_INVALID": "Invalid grid parameters: {msg}",
+    "GENERATE_TOO_MANY_CARDS": "Too many cards for a single atlas: {msg}",
+    "INPLACE_CARDS_NOT_FOUND": "cards.csv is required for in-place rebuild: {msg}",
+    "INPLACE_SOURCE_MISSING": "Source atlas missing: {msg}",
+    "INPLACE_CELL_SIZE_MISMATCH": "Card image size does not match the cell size: {msg}",
+    "INPLACE_GRID_MISMATCH": "Source atlas size does not match the declared grid: {msg}",
+    "PLAN_SAVE_INVALID": "Save unavailable: {msg}",
+    "PLAN_RULE_INVALID": "Invalid replace rule: {msg}",
+    "objects": {
+      "notFound": "objects.csv not found: {path}",
+      "readFailed": "Failed to read objects.csv: {path} ({detail})",
+      "invalid": "Invalid objects.csv: {path} ({detail})",
+      "duplicateId": "Duplicate asset_id in objects.csv: {path} ({assetId})",
+      "writeFailed": "Failed to write objects.csv: {path} ({detail})"
+    },
+    "ASSETS_INVALID": "assets.yaml validation failed: {msg}",
+    "ASSETS_READ_FAILED": "Failed to read assets.yaml: {msg}",
+    "ASSETS_WRITE_FAILED": "Failed to write assets.yaml: {msg}",
+    "BUILD_FAILED": "Failed to build the pack: {msg}",
+    "DECK_INVALID": "deck.yaml validation failed: {msg}",
+    "DECK_NOT_FOUND": "deck.yaml not found: {msg}",
+    "DECK_READ_FAILED": "Failed to read deck.yaml: {msg}",
+    "DECK_WRITE_FAILED": "Failed to write deck.yaml: {msg}",
+    "DIFF_FAILED": "Diff failed: {msg}",
+    "GIT_LFS_INSTALL_FAILED": "git lfs install failed: {msg}",
+    "GUID_MISMATCH": "GUID mismatch: {msg}",
+    "PACK_READ_FAILED": "Failed to read pack.yaml: {msg}",
+    "PACK_WRITE_FAILED": "Failed to write pack.yaml: {msg}",
+    "PULL_FAILED": "Pull failed: {msg}",
+    "PUSH_FAILED": "Push failed: {msg}",
+    "SKELETON_INVALID": "Invalid skeleton save: {msg}",
+    "ATLAS_CMYK": "Atlas is in CMYK colour space (not supported by TTS): {msg}",
+    "ATLAS_GRID_MISMATCH": "Atlas grid mismatch: {msg}",
+    "ATLAS_UNREADABLE": "Atlas unreadable or has invalid dimensions: {msg}",
+    "CARD_CMYK": "Card image is in CMYK colour space (not supported by TTS): {msg}",
+    "CARD_ID_MISMATCH": "CardID does not match slot: {msg}",
+    "CARD_IMAGE_MISSING": "Card image file missing: {msg}",
+    "CARD_IMAGE_UNREADABLE": "Card image unreadable: {msg}",
+    "DECK_EMPTY_SLOT": "Deck has empty slot(s): {msg}",
+    "DECK_TOO_MANY_CARDS": "Too many cards for the grid capacity: {msg}",
+    "LANG_VARIANT_MALFORMED": "Malformed language variant: {msg}",
+    "LANG_VARIANT_SUSPECT": "Language variant segment inside a plain URL (possibly corrupted): {msg}",
+    "OBJECT_FILE_MISSING": "File referenced by objects.csv is missing: {msg}",
+    "PARENT_CHILD_DECK_MISMATCH": "Parent/child CustomDeck mismatch: {msg}",
+    "SHARED_ATLAS_NOT_DECLARED": "Shared atlas not declared in deck.yaml: {msg}",
+    "SHEET_SOURCE_MISSING": "Sheet source file missing: {msg}",
+    "SKELETON_UNREADABLE": "Failed to read skeleton save: {msg}"
   },
   "common": {
     "yes": "Yes",

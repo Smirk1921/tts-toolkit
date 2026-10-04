@@ -21,6 +21,7 @@ import { Command, CommanderError } from "commander";
 import { initI18n, t, type Lang } from "../i18n/index.js";
 import { assetsCommand } from "./commands/assets.js";
 import { configCommand } from "./commands/config.js";
+import { deckCommand } from "./commands/deck.js";
 import { execCommand } from "./commands/exec.js";
 import { packCommand } from "./commands/pack.js";
 import { pullCommand } from "./commands/pull.js";
@@ -168,6 +169,7 @@ program.addCommand(pullCommand);
 program.addCommand(execCommand);
 program.addCommand(assetsCommand);
 program.addCommand(packCommand);
+program.addCommand(deckCommand);
 localizeCommandTree(program);
 
 /**

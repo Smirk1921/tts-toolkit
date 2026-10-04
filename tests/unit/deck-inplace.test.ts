@@ -663,7 +663,7 @@ describe('inplaceAtlas 错误路径', () => {
       'error.pack.inplaceGridMismatch',
       '400x200',
     );
-    expect(err.message === 'error.pack.inplaceGridMismatch' || err.message.includes('2x1')).toBe(true);
+    expect(err.message === 'error.pack.inplaceGridMismatch' || err.message.includes('200x100')).toBe(true);
   });
 
   it('同一 sheet 的 sheet_cols/sheet_rows 声明不一致 → INPLACE_GRID_MISMATCH', async () => {

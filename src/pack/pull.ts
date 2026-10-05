@@ -53,7 +53,7 @@ import path from "node:path";
 import { withEditorServer } from "../cli/with-server.js";
 import { t } from "../i18n/index.js";
 import { GLOBAL_GUID } from "../protocol/messages.js";
-import type { ScriptState } from "../session/scripts.js";
+import { SessionScripts, type ScriptState } from "../session/scripts.js";
 import { ensureLayout, scriptFileName, scriptsDir, uiDir, uiFileName } from "./layout.js";
 import { PackError, readPackYaml } from "./packyaml.js";
 
@@ -67,6 +67,13 @@ export interface PullOptions {
   root: string;
   /** 等待 TTS 回推脚本快照的超时（毫秒）；缺省走 SessionScripts 的 30000 */
   timeoutMs?: number;
+  /**
+   * 可选的已绑定编辑器端口服务器（阶段 4 hub 注入用）。
+   *
+   * 缺省时本函数经 withEditorServer 临时独占 39998；hub 路由处理器必须传入
+   * daemon.server（hub 已持有 39998），避免二次独占触发 PortInUseError。
+   */
+  server?: import("../protocol/editor-server.js").EditorServer;
 }
 
 /** pullFromGame 的返回值（计数语义见模块头注释） */
@@ -328,13 +335,23 @@ export async function pullFromGame(opts: PullOptions): Promise<PullResult> {
 
   // —— 3~5. 独占编辑器端口 → 拉快照 → 逐对象落盘 ——
   // 协议 / 会话层错误（端口占用 / 未连接 / 超时）不在这里包装，原样上抛给 CLI 分类
-  await withEditorServer(async ({ scripts }) => {
+  if (opts.server !== undefined) {
+    // hub 注入路径：复用 hub 已绑定的 39998，不再独占
+    const scripts = new SessionScripts(opts.server);
     const states = await scripts.getScripts(opts.timeoutMs);
     for (const state of states) {
-      // 单个对象的问题（命名非法 / 写盘失败）统一转成 PackError
       await guard(`同步对象 ${state.name}`, () => applyState(root, state, counters));
     }
-  });
+  } else {
+    // 独立模式：临时独占 39998，命令结束立即释放
+    await withEditorServer(async ({ scripts }) => {
+      const states = await scripts.getScripts(opts.timeoutMs);
+      for (const state of states) {
+        // 单个对象的问题（命名非法 / 写盘失败）统一转成 PackError
+        await guard(`同步对象 ${state.name}`, () => applyState(root, state, counters));
+      }
+    });
+  }
 
   return counters;
 }

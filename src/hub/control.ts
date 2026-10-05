@@ -845,6 +845,9 @@ class ControlServerImpl implements ControlServer {
 
   /**
    * POST /v1/scripts/pull：拉全部脚本到工作区（pullFromGame）。
+   *
+   * hub 注入：传 daemon.server 复用 hub 已绑定的 39998，避免 pullFromGame 内部
+   * withEditorServer 二次独占触发 PortInUseError（阶段 4 已知问题 #1 修复）。
    * @param req 进入的请求
    * @param res 目标响应
    */
@@ -854,7 +857,7 @@ class ControlServerImpl implements ControlServer {
       return;
     }
     const root = requireString(body, "root");
-    const result = await pullFromGame({ root });
+    const result = await pullFromGame({ root, server: this.daemon.server });
     sendJson(res, 200, result);
   }
 
@@ -992,6 +995,8 @@ class ControlServerImpl implements ControlServer {
 
   /**
    * POST /v1/diff：本地 vs 游戏内差异（diffWorkspace）。
+   *
+   * hub 注入：传 daemon.server 复用 hub 已绑定的 39998（阶段 4 已知问题 #1 修复）。
    * @param req 进入的请求
    * @param res 目标响应
    */
@@ -1001,7 +1006,7 @@ class ControlServerImpl implements ControlServer {
       return;
     }
     const root = requireString(body, "root");
-    const result = await diffWorkspace({ root });
+    const result = await diffWorkspace({ root, server: this.daemon.server });
     sendJson(res, 200, result);
   }
 

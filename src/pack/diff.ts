@@ -68,7 +68,7 @@ import path from "node:path";
 import { withEditorServer } from "../cli/with-server.js";
 import { t } from "../i18n/index.js";
 import { GLOBAL_GUID } from "../protocol/messages.js";
-import type { ScriptState } from "../session/scripts.js";
+import { SessionScripts, type ScriptState } from "../session/scripts.js";
 import { scriptsDir, uiDir } from "./layout.js";
 import { PackError, readPackYaml } from "./packyaml.js";
 
@@ -118,6 +118,13 @@ export interface DiffOptions {
   root: string;
   /** 等待 TTS 回推 GameLoaded 的超时（毫秒）；缺省由 SessionScripts 决定（30 秒） */
   timeoutMs?: number;
+  /**
+   * 可选的已绑定编辑器端口服务器（阶段 4 hub 注入用）。
+   *
+   * 缺省时本函数经 withEditorServer 临时独占 39998；hub 路由处理器必须传入
+   * daemon.server（hub 已持有 39998），避免二次独占触发 PortInUseError。
+   */
+  server?: import("../protocol/editor-server.js").EditorServer;
 }
 
 // ---------------------------------------------------------------------------
@@ -418,8 +425,11 @@ export async function diffWorkspace(opts: DiffOptions): Promise<DiffResult> {
   // —— 1. 工作区校验（非图包目录立刻失败，不占用编辑器端口）——
   await readPackYaml(root);
 
-  // —— 2. 游戏侧：临时独占编辑器端口，取当前存档的 scriptStates ——
-  const states = await withEditorServer(async ({ scripts }) => scripts.getScripts(opts.timeoutMs));
+  // —— 2. 游戏侧：取当前存档的 scriptStates ——
+  // hub 注入路径复用 hub 已绑定的 39998；独立模式临时独占，命令结束释放
+  const states = opts.server !== undefined
+    ? await new SessionScripts(opts.server).getScripts(opts.timeoutMs)
+    : await withEditorServer(async ({ scripts }) => scripts.getScripts(opts.timeoutMs));
 
   // —— 3. 本地侧：扫描 scripts/ 与 ui/（目录缺失按空工作区处理）——
   const localScripts = await scanLocalFiles(scriptsDir(root), ".lua");

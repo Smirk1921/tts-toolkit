@@ -2,8 +2,9 @@
 
 > **本文档由窗口 D（阶段 4）产出，CLI / MCP 使用方与 hub 维护者必读。**
 >
-> 依据：`src/hub/control.ts`（控制通道服务实现，12 条 JSON 路由 + SSE）、`src/hub/lifecycle.ts`（进程编排与优雅退出）、`src/mcp/client.ts`（`HubClient` / `probeHub`）、`src/cli/_shared.ts`（CLI 委托判定）、`src/protocol/ports.ts`（端口常量）。路由表与 `方案设计.md` §14.5.1 S2、`施工流程.md` 阶段 4 的路由映射一致。
+> 依据：`src/hub/control.ts`（控制通道服务实现，12 条 JSON 路由 + SSE）、`src/hub/lifecycle.ts`（进程编排与优雅退出）、`src/mcp/client.ts`（`HubClient` / `probeHub`）、`src/cli/_shared.ts`（CLI 委托判定）、`src/protocol/ports.ts`（端口常量）；`/v1/push` 的流水线语义依据 `src/pack/push.ts`（`pushSaveAndPlay`）与 `src/safety/baseline.ts`。路由表与 `方案设计.md` §14.5.1 S2、`施工流程.md` 阶段 4 的路由映射一致。
 > 本文档描述**已实现的真实契约**，不是设想稿。发现的实现问题一律显式标注（§4.2 / §4.10 / §9 已知问题 #1），不隐去。
+> **阶段 5（写入路径）修订（2026-10-05）**：已知问题 #1（hub 运行期 pull / diff 必 500）**已修复**——`pullFromGame` / `diffWorkspace` 增加 `server?: EditorServer` 注入，hub 路由传 `daemon.server` 复用已绑定的 39998（§4.2 / §4.10）；`POST /v1/push` 契约扩展为完整写入流水线（§4.11）。
 
 ---
 
@@ -82,7 +83,7 @@ hub 控制通道是 `tts hub` 常驻进程暴露的**本机 HTTP+JSON 控制面*
 | `HUB_PAYLOAD_TOO_LARGE` | 413 | 请求体超过 1MB |
 | `HUB_UNSUPPORTED_MEDIA_TYPE` | 415 | 读体 POST 路由的 `Content-Type` 不是 `application/json` |
 | `HUB_CONFIRM_REQUIRED` | 400 | `POST /v1/push` 的 `confirm` 不严格等于 `true` |
-| `HUB_PACK_ERROR` | 400 | 底层 `PackError` 透传；`details.packCode` 为业务码（`PACK_*` / `PULL_FAILED` / `SLICE_*` / `PLAN_*` / `IMPORT_*` / `REGISTRY_*` / `PUSH_FAILED` 等） |
+| `HUB_PACK_ERROR` | 400 | 底层 `PackError` 透传；`details.packCode` 为业务码（`PACK_*` / `PULL_FAILED` / `SLICE_*` / `PLAN_*` / `IMPORT_*` / `REGISTRY_*` / `PUSH_FAILED` / `PUSH_ASSET_CHANGES_DETECTED` / `BASELINE_CONFLICT` / `PUSH_VERIFY_FAILED` / `BASELINE_*` / `BACKUP_*` 等） |
 | `HUB_LUA_ERROR` | 400 | Lua 运行时错误透传 |
 | `HUB_INTERNAL_ERROR` | 500 | 其余异常（含会话层超时 / 未连接 TTS 的普通 Error、端口占用 `PortInUseError`） |
 
@@ -97,7 +98,7 @@ hub 控制通道是 `tts hub` 常驻进程暴露的**本机 HTTP+JSON 控制面*
 
 ### 3.4 响应体约定
 
-- 成功响应一律 JSON 对象；`{ok:true}` 是多数操作型路由的通用成功形（`save-and-play` / `push` / `shutdown`）。
+- 成功响应一律 JSON 对象；`{ok:true}` 是多数操作型路由的通用成功形（`save-and-play` / `shutdown`）；`push` 的成功形是 `{ok:true, dryRun, pushed, skipped, items, ...}`（§4.11），`items = pushed + skipped` 为向后兼容别名。
 - 请求处理期间客户端断开：服务器静默（无响应对象可写），不产生未处理异常（`control.ts:617-622`）。
 
 ---
@@ -120,7 +121,7 @@ S2 控制面共 **12 条 JSON 路由**（下表）+ **1 条 SSE 事件流**（`G
 | 8 | POST | `/v1/deck/plan` | 替换计划 dry-run | 无 | `PlanOptions` | `PlanResult` |
 | 9 | POST | `/v1/import` | 按 import.yaml 导入素材 | 写本地文件 | `{root, manifestPath, dryRun?}` | `ImportResult` |
 | 10 | POST | `/v1/diff` | 本地 vs 游戏内差异 | 无 | `{root}` | `DiffResult` |
-| 11 | POST | `/v1/push` | 写回并重载（必须 `confirm:true`） | 改游戏状态 | `{root, confirm:true}` | `{ok:true, items}` |
+| 11 | POST | `/v1/push` | 写回并重载（必须 `confirm:true`） | 改游戏状态（可选自动备份） | `{root, confirm:true, dryRun?, forceScriptsOnly?, skipBackup?, skipBaselineCheck?, backupRetention?}` | `PushSaveResult` 摘要（§4.11） |
 | 12 | POST | `/v1/hub/shutdown` | 优雅关闭 hub | 进程退出 | 不读 | `{ok:true}` |
 
 所有 POST 路由通用的请求侧错误（400 / 404 / 405 / 413 / 415）见 §3；各小节只列该路由特有的错误。curl 示例假定 hub 在缺省端口 39995。
@@ -175,11 +176,12 @@ curl -s -X POST http://127.0.0.1:39995/v1/scripts/pull \
   -d '{"root":"D:/packs/第七大陆"}'
 ```
 
-> ⚠️ **当前实现限制（阶段 4 已知 bug，待修）**
-> - **症状**：hub 运行期调用本路由返回 **500 `HUB_INTERNAL_ERROR`**（message 为 `PortInUseError` 的端口占用描述）。
-> - **根因**：`handlePull` 直接调 `pullFromGame`，而后者内部经 `withEditorServer` **新建 EditorServer 并独占绑定 39998**（`pull.ts:331` → `cli/with-server.ts:43-44` → `protocol/editor-server.ts:55-88`），与 hub daemon 已持有的 39998 冲突 → 第二次 `start()` 抛 `PortInUseError`（非 `PackError`/`LuaError` → 500）。
-> - **修复方向**（不在本契约范围）：让 `pullFromGame` / `diffWorkspace` 接受可选的 `SessionScripts` / `EditorServer` 注入，hub 路由处理器传入 daemon 的会话（`daemon.scripts` / `daemon.server`）而不是新建。
-> - **临时规避**：hub 运行期间，仓内调用方应直接使用 daemon 会话层；外部调用方暂时只能等待修复。
+> ✅ **阶段 4 已知问题 #1（hub 运行期本路由必 500）— 已修复（阶段 5）**
+> - **原症状**：hub 运行期调用本路由返回 **500 `HUB_INTERNAL_ERROR`**（message 为 `PortInUseError` 的端口占用描述）。
+> - **根因**：`handlePull` 直接调 `pullFromGame`，而后者内部经 `withEditorServer` **新建 EditorServer 并独占绑定 39998**，与 hub daemon 已持有的 39998 冲突 → 第二次 `start()` 抛 `PortInUseError`（非 `PackError`/`LuaError` → 500）。
+> - **修复**：`PullOptions` 增加可选 `server?: EditorServer`（`src/pack/pull.ts:93-99`）；传入时用 `new SessionScripts(opts.server)` 复用该服务器、**不再** `withEditorServer` 独占端口（`src/pack/pull.ts:367-369`）。`handlePull` 传 `daemon.server`（`src/hub/control.ts:887`）。`/v1/diff` 同款修复，见 §4.10。
+> - **现状**：hub 运行期本路由正常返回 `PullResult`；独立模式（CLI 无 hub 时，不传 `server`）行为不变，仍临时独占 39998。
+> - 单元口径：注入路径由 `tests/unit/pack-pull-baseline.test.ts:430`（`pullFromGame({root, server: fakeEditorServer(states)})`，不经过 `withEditorServer`）覆盖；hub 路由侧对 `/v1/diff` 只覆盖到 `PACK_NOT_FOUND` 透传（`tests/unit/hub-control.test.ts:249-256`），**没有**直接断言 `/v1/scripts/pull` / `/v1/diff` 收到 `daemon.server` 的用例。
 
 ### 4.3 POST /v1/scripts/save-and-play
 
@@ -340,30 +342,72 @@ curl -s -X POST http://127.0.0.1:39995/v1/diff \
   -d '{"root":"D:/packs/第七大陆"}'
 ```
 
-> ⚠️ **当前实现限制（阶段 4 已知 bug，待修）**
-> - **症状**：hub 运行期调用本路由返回 **500 `HUB_INTERNAL_ERROR`**（`PortInUseError`）。
-> - **根因**：`handleDiff` 直接调 `diffWorkspace`，后者内部经 `withEditorServer` 重新独占绑定 39998（`diff.ts:422`），与 hub daemon 已持有的 39998 冲突（同 §4.2）。
-> - **修复方向**：与 §4.2 相同——为 `diffWorkspace` 增加可选会话注入，hub 路由传入 daemon 会话而不是新建。
-> - **临时规避**：同 §4.2。
+> ✅ **阶段 4 已知问题 #1（hub 运行期本路由必 500）— 已修复（阶段 5）**
+> - **原症状**：hub 运行期调用本路由返回 **500 `HUB_INTERNAL_ERROR`**（`PortInUseError`）。
+> - **根因**：`handleDiff` 直接调 `diffWorkspace`，后者内部经 `withEditorServer` 重新独占绑定 39998，与 hub daemon 已持有的 39998 冲突（同 §4.2）。
+> - **修复**：`DiffOptions` 增加可选 `server?: EditorServer`（`src/pack/diff.ts:161-167`）；传入时用 `new SessionScripts(opts.server).getScripts(...)` 复用该服务器，**不再** `withEditorServer`（`src/pack/diff.ts:799-801`）。`handleDiff` 传 `daemon.server`（`src/hub/control.ts:1036`）。
+> - **现状**：hub 运行期本路由正常返回 `DiffResult`；独立模式行为不变。
+> - **测试现状**：`diffWorkspace` 的 `server` 注入分支当前无专门单测（`tests/unit/pack-diff.test.ts` / `pack-diff-unified.test.ts` 走 `with-server` 打桩）；`tests/unit/hub-control.test.ts:249-256` 只覆盖 `/v1/diff` 的 `PACK_NOT_FOUND` 透传。属已知测试缺口，不影响契约。
 
 ### 4.11 POST /v1/push
 
-- 请求体（`control.ts:1018-1042`）：
+阶段 5「写入路径」的实接通路由：整条流水线委托 `src/pack/push.ts` 的 `pushSaveAndPlay`，本路由只做**字段校验 + 坑 17 注入 + 响应整形**（`handlePush`，`src/hub/control.ts:1070-1107`）。
 
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `root` | string | ✅ | 图包工作区根目录 |
-| `confirm` | 字面量 `true` | ✅ | **不严格等于 `true` → 400 `HUB_CONFIRM_REQUIRED`**（`false` / 缺失 / `"true"` 都拒绝） |
+- 请求体：
 
-- 行为：`collectPushItems({root})` 收集本地 `scripts/` + `ui/` 清单 → 逐条读取文件内容组装完整 `scriptStates` → `daemon.scripts.saveAndPlay` 写回并重载。**不做** baseline hash / 备份目录 / 素材改动检测（阶段 5 范围）；`scriptStates` 缺字段的删除语义见 §4.3。
-- 响应 200：`{ok: true, items: <写回对象数>}`。
-- 可能的错误码：400 `HUB_CONFIRM_REQUIRED`（confirm 检查在 root 校验之后）；400 `HUB_BAD_REQUEST`（root 缺失）；400 `HUB_PACK_ERROR`（`PUSH_FAILED`）；500 `HUB_INTERNAL_ERROR`。
-- curl：
+| 字段 | 类型 | 必填 | 缺省 | 说明 |
+| --- | --- | --- | --- | --- |
+| `root` | string | ✅ | 无 | 图包工作区根目录（非空字符串；缺失 / 空白 → 400 `HUB_BAD_REQUEST`） |
+| `confirm` | 字面量 `true` | ✅ | 无 | **不严格等于 `true` → 400 `HUB_CONFIRM_REQUIRED`**（`false` / 缺失 / `"true"` 都拒绝）。注意：`root` 校验在 `confirm` 之前，两者都缺时先报 `HUB_BAD_REQUEST` |
+| `dryRun` | boolean | 可省略 | `false` | 试运行：只做检测与过滤、返回"将推送什么"，不备份 / 不发送 / 不写基线。**与 `pushSaveAndPlay` 自身的缺省 `true` 不同**——HTTP 层的 `confirm:true` 已表达实写意图 |
+| `forceScriptsOnly` | boolean | 可省略 | `false` | 素材有改动时仍强制只推脚本（用户自担风险；检测结果记入 `assetChanges` 而不报错） |
+| `skipBackup` | boolean | 可省略 | `false` | 跳过 push 前自动备份（不推荐） |
+| `skipBaselineCheck` | boolean | 可省略 | `false` | 跳过基线冲突检测（冲突记入 `baselineConflicts` 而不报错） |
+| `backupRetention` | number | 可省略 | `20` | 备份保留份数；路由只校验**正有限数字**（`optionalPositiveNumber`），不校验整数与上限 100（非整数会被底层 `pruneBackups` 的 `slice` 截断） |
+
+- 字段类型不符 → 400 `HUB_BAD_REQUEST`，message 形如 `invalid field: dryRun (boolean required)` / `invalid field: backupRetention (positive finite number required)`（`control.ts:1080-1084`）。
+- 行为（`pushSaveAndPlay`，`src/pack/push.ts:60-126`）：读 `pack.yaml` → 收集本地 `scripts/` + `ui/` 清单（空清单直接返回）→ 拉游戏侧快照 → **素材改动检测**（`readBaseline` + `detectAssetChanges`）→ **基线冲突检测**（`diffBaseline`）→ 过滤无变化对象 → **强制补齐 script / ui**（缺字段 = TTS 删除）→ dryRun 则返回 → 备份 → `saveAndPlay` → **回读校验**（不一致 → `PUSH_VERIFY_FAILED`，基线不更新）→ 更新 `.tts/baseline.json`（`writeBaseline` + `touchLastPushAt`，契约见 `docs/schemas/baseline.json.md`）。
+- **坑 17**：路由注入 `server: this.daemon.server` 复用 hub 已绑定的编辑器端口 39998，**绝不**二次 `withEditorServer`（`control.ts:1087`；单测 `tests/unit/hub-control-push.test.ts:239-244` 断言是同一对象）。
+- **不注入确认函数**：`pushSaveAndPlay` 的 `confirm` 回调（CLI 交互确认门）不传——hub 场景由本路由的 `confirm:true` 一门拦截。
+- 响应 200：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `ok` | 字面量 `true` | 固定 |
+| `dryRun` | boolean | 与请求一致 |
+| `pushed` | number | 实际写入（dryRun 下为"将写入"）的对象数 |
+| `skipped` | number | 无变化（含防御性跳过）而未发送的对象数 |
+| `items` | number | **向后兼容别名**：`pushed + skipped`（旧客户端的 `items` 计数） |
+| `backupDir` | string? | 备份目录完整路径；仅**实写且未 `skipBackup`** 时携带 |
+| `baselineConflicts` | `BaselineConflict[]`? | 仅检测到冲突且被 `skipBaselineCheck` 放行时携带（否则已 400 中断） |
+| `assetChanges` | `AssetChanges`? | 仅检测到素材改动且被 `forceScriptsOnly` 放行时携带（否则已 400 中断） |
+
+- `note` 字段（`PushSaveResult.note`，中文摘要）**不透出**到 HTTP 响应。
+- 可能的错误码：
+
+| HTTP | code | 触发 |
+| --- | --- | --- |
+| 400 | `HUB_BAD_REQUEST` | `root` 缺失 / 空白；5 个可选字段类型不符 |
+| 400 | `HUB_CONFIRM_REQUIRED` | `confirm !== true`（`root` 校验通过之后才检查） |
+| 400 | `HUB_PACK_ERROR` | 底层 `PackError` 透传，`details.packCode` ∈ `PACK_NOT_FOUND` / `PACK_INVALID` / `PACK_READ_FAILED`（pack.yaml）、`PUSH_ASSET_CHANGES_DETECTED`（素材有改动且未 `forceScriptsOnly`）、`BASELINE_CONFLICT`（游戏侧相对基线被改且未 `skipBaselineCheck`）、`PUSH_FAILED`（本地脚本 / UI 读取失败）、`PUSH_VERIFY_FAILED`（回读不一致）、`BASELINE_READ_FAILED` / `BASELINE_ASSET_SCAN_FAILED` / `BASELINE_WRITE_FAILED`（基线）、`BACKUP_WRITE_FAILED` / `BACKUP_PRUNE_FAILED` / `BACKUP_DIR_INVALID`（备份） |
+| 500 | `HUB_INTERNAL_ERROR` | 端口占用（本路由注入 `server`、不会二次绑定 39998）/ TTS 未连接 / 等待重载超时等普通 Error |
+
+> `PUSH_ABORTED`（确认门返回 false）经本路由**不可达**：路由不注入 `confirm` 回调（`control.ts:1093`）。
+
+- curl（实写；`--yes` 语义）：
 
 ```bash
 curl -s -X POST http://127.0.0.1:39995/v1/push \
   -H "Content-Type: application/json" \
-  -d '{"root":"D:/packs/第七大陆","confirm":true}'
+  -d '{"root":"D:/packs/第七大陆","confirm":true,"backupRetention":20}'
+```
+
+- curl（试运行：检测素材改动 / 基线冲突并报告，不写任何东西）：
+
+```bash
+curl -s -X POST http://127.0.0.1:39995/v1/push \
+  -H "Content-Type: application/json" \
+  -d '{"root":"D:/packs/第七大陆","confirm":true,"dryRun":true}'
 ```
 
 ### 4.12 POST /v1/hub/shutdown
@@ -433,11 +477,11 @@ curl -N http://127.0.0.1:39995/v1/events
 | `deckPlan(opts)` | POST `/v1/deck/plan` | `unknown`（`PlanResult`） |
 | `importAssets(root, manifestPath, dryRun?)` | POST `/v1/import` | `unknown` |
 | `diff(root)` | POST `/v1/diff` | `unknown` |
-| `push(root, confirm: true)` | POST `/v1/push` | `HubPushResult` `{ok:true, items}` |
+| `push(root, confirm: true, opts?)` | POST `/v1/push` | `HubPushResult` `{ok:true, dryRun, pushed, skipped, items, backupDir?, baselineConflicts?, assetChanges?}` |
 | `shutdown()` | POST `/v1/hub/shutdown` | `HubOkResult` `{ok:true}` |
 
 - 缺省选项（`HubClientOptions`，`client.ts:49-76`）：`host=127.0.0.1`、`port=39995`、单请求 `timeoutMs=30000`（覆盖"发起请求 + 读取响应体"全程）；host 为 IPv6 字面量时自动加 `[]`。
-- 请求体由 `JSON.stringify` 序列化，仅在有 body 时带 `Content-Type: application/json`；`push` 的 `confirm` 参数类型是字面量 `true`——调用方传 `false` / 漏传**编译期**即报错，与服务端 `HUB_CONFIRM_REQUIRED` 门双保险（`client.ts:525`）。
+- 请求体由 `JSON.stringify` 序列化，仅在有 body 时带 `Content-Type: application/json`；`push` 的 `confirm` 参数类型是字面量 `true`——调用方传 `false` / 漏传**编译期**即报错，与服务端 `HUB_CONFIRM_REQUIRED` 门双保险（`client.ts:566`）。`push` 第 3 参 `PushOptions`（`dryRun` / `forceScriptsOnly` / `skipBackup` / `skipBaselineCheck` / `backupRetention`，全部可选）逐字段透传，未给的字段**不出现在请求体**里、由 hub 侧套用缺省值（§4.11）。
 
 ### 6.2 错误分类（`HubClient.request`）
 
@@ -446,7 +490,7 @@ curl -N http://127.0.0.1:39995/v1/events
 | `fetch` reject（连接拒绝 ECONNREFUSED 等）、超时中止、响应体读取中断 | `HubNotRunningError`（语义：hub 没在跑或不可达） |
 | HTTP 4xx/5xx 且 body 是 `{error:{code,message,details?}}` 标准形 | `HubError`（原样保留 `code` / `httpStatus` / `details`） |
 | HTTP 4xx/5xx 但 body 非标准形 | `HubError(httpStatus, "HUB_UNKNOWN", <原始 body 文本>)` |
-| HTTP 2xx 但 body 非法 JSON，或定型路由（status / save-and-play / push / shutdown）shape 不符 | `HubError(httpStatus, "HUB_UNKNOWN", ...)`（协议违规） |
+| HTTP 2xx 但 body 非法 JSON，或定型路由（status / save-and-play / push / shutdown）shape 不符 | `HubError(httpStatus, "HUB_UNKNOWN", ...)`（协议违规）。push 的定型要求 `ok:true` + `dryRun` / `pushed` / `skipped` 均为正确类型；`items` 缺失时客户端按 `pushed + skipped` 补算（`client.ts:586-621`） |
 
 - `HubError`（`client.ts:134-155`）与 `HubNotRunningError`（`:162-170`）是**兄弟类**（都直接继承 `Error`）；消费方按 `src/mcp/tools/errors.ts:38-49` 的约定先判 `HubNotRunningError`（序列化为 `HUB_NOT_RUNNING`），再判 `HubError`（透传 `code` / `details`），最后 `INTERNAL_ERROR` / `UNKNOWN`。
 - 网络失败绝不返回半截结果：失败即抛出。
@@ -495,4 +539,5 @@ S2 明确控制通道**不暴露**以下能力（`control.ts:5-6`、`施工流�
 
 | 日期 | 变更 |
 | --- | --- |
-| 2026-10-05 | 初版（窗口 D / 阶段 4）。契约依据 `src/hub/control.ts`（12 条 JSON 路由 + `GET /v1/events` SSE）、`src/hub/lifecycle.ts`、`src/mcp/client.ts`、`src/cli/_shared.ts`；路由表与 `方案设计.md` §14.5.1 S2 / `施工流程.md` 阶段 4 一致。**已知问题 #1**：`/v1/scripts/pull` 与 `/v1/diff` 在 hub 运行期因 39998 端口冲突返回 500（待修，详见 §4.2 / §4.10）。 |
+| 2026-10-05 | 初版（窗口 D / 阶段 4）。契约依据 `src/hub/control.ts`（12 条 JSON 路由 + `GET /v1/events` SSE）、`src/hub/lifecycle.ts`、`src/mcp/client.ts`、`src/cli/_shared.ts`；路由表与 `方案设计.md` §14.5.1 S2 / `施工流程.md` 阶段 4 一致。**已知问题 #1**：`/v1/scripts/pull` 与 `/v1/diff` 在 hub 运行期因 39998 端口冲突返回 500（待修，详见 §4.2 / §4.10）。**（阶段 5 已修复，见下行）** |
+| 2026-10-05 | 阶段 5（写入路径）Run 2 修订。① **已知问题 #1 修复落档**：`PullOptions.server` / `DiffOptions.server` 注入（`src/pack/pull.ts:93-99` / `src/pack/diff.ts:161-167`），hub 路由传 `daemon.server`（`control.ts:887` / `:1036`）——§4.2 / §4.10 的"待修"块改为"已修复"并补测试现状。② **§4.11 `/v1/push` 契约扩展**：请求体加 `dryRun` / `forceScriptsOnly` / `skipBackup` / `skipBaselineCheck` / `backupRetention` 五个可选字段，响应体改为 `{ok:true, dryRun, pushed, skipped, items(=pushed+skipped 兼容别名), backupDir?, baselineConflicts?, assetChanges?}`，错误码补 `PUSH_ASSET_CHANGES_DETECTED` / `BASELINE_CONFLICT` 等（经 `HUB_PACK_ERROR` + `details.packCode` 透传）。③ 依据行补 `src/pack/push.ts` / `src/safety/baseline.ts`；§3.3 / §3.4 / §6.1 / §6.2 同步 push 的新形状与注入语义；新增契约文档 `docs/schemas/baseline.json.md` 交叉引用。 |

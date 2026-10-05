@@ -15,8 +15,7 @@
  *
  * baseline 文件：<root>/.tts/baseline.json（2 空格缩进 JSON + 末尾换行）。
  * src/pack/init.ts 已把它列入图包 .gitignore（工具内部状态，不入库）。
- * layout.ts 的 DIR_TTS 常量未导出、且本模块不得修改 layout.ts，因此路径按任务书
- * 指示写死拼接（{@link baselinePath}）。
+ * 路径由 layout.ts 的 {@link baselinePath} 提供（与 skeletonPath 同级）。
  *
  * 典型时序（调用方 = 阶段 5 的 pull / push 命令与 hub 路由）：
  * - pull：pullFromGame 落盘后 → writeBaseline(states)（保留旧 lastPushAt，不抹掉推送史）；
@@ -28,11 +27,9 @@
  * hash 约定：
  * - 算法与 src/pack/import.ts 的 shortSha256 同款：
  *   createHash("sha256").update(text, "utf8").digest("hex")，不截断（64 字符小写 hex）；
- * - **前置归一化**（CRLF / 单独 CR 折成 LF + trimEnd）与 src/pack/diff.ts 的
- *   normalizeContent 语义逐字一致。该函数未从 diff.ts 导出、且本模块不得修改
- *   diff.ts，故按仓库「小工具函数各模块持有副本」的既定约定（参见 layout.ts 的
- *   sanitizeName 与 push.ts 的 errCode）在本模块持有同款实现——两处如需调整必须
- *   同步修改；不归一化会把编辑器换行风格 / 结尾空行差异误报成冲突（假冲突）。
+ * - **前置归一化**（CRLF / 单独 CR 折成 LF + trimEnd）从 src/pack/diff.ts 导入
+ *   normalizeContent（与 push.ts 同一份实现；diff.ts 起统一导出，禁止再持私有副本），
+ *   不归一化会把编辑器换行风格 / 结尾空行差异误报成冲突（假冲突）。
  *
  * 素材集合口径（用户裁决「内容 hash 最严」；只覆盖以下文本清单，不含图片等二进制素材）：
  * - `<root>/decks/<每个卡堆目录>/cards.csv`
@@ -59,6 +56,7 @@
  *
  * 本模块纯离线：不连 TTS、不起 withEditorServer（坑 17 不适用），不触碰
  * pack/build.ts（约束 8）、walkSaveUrls（坑 4）与任何素材 URL。
+ * normalizeContent 只从 diff.ts 借用（纯函数；该 import 不触发任何会话 / 端口）。
  *
  * 错误码（{@link PackError.code}）：
  * - "BASELINE_READ_FAILED"       baseline.json 存在但读取发生「不存在」以外的 IO 错误
@@ -78,7 +76,8 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { t } from "../i18n/index.js";
-import { decksDir, objectsDir, sanitizeName } from "../pack/layout.js";
+import { normalizeContent } from "../pack/diff.js";
+import { baselinePath, decksDir, objectsDir, sanitizeName } from "../pack/layout.js";
 import { PackError } from "../pack/packyaml.js";
 import { GLOBAL_GUID } from "../protocol/messages.js";
 import type { ScriptState } from "../session/scripts.js";
@@ -86,12 +85,6 @@ import type { ScriptState } from "../session/scripts.js";
 // ---------------------------------------------------------------------------
 // 常量
 // ---------------------------------------------------------------------------
-
-/** baseline 文件所在目录（工具内部状态目录；layout.ts 的 DIR_TTS 未导出，写死拼接） */
-const BASELINE_DIR = ".tts";
-
-/** baseline 文件名（init.ts 已把它列入图包 .gitignore） */
-const BASELINE_FILE = "baseline.json";
 
 /** decks/ 下卡堆清单文件名 */
 const DECK_MANIFEST_FILE = "deck.yaml";
@@ -201,19 +194,6 @@ function compareCodeUnits(a: string, b: string): number {
     return 1;
   }
   return 0;
-}
-
-/**
- * 内容比较 / hash 前的归一化：CRLF / 单独 CR 一律折成 LF，再去掉结尾空白。
- *
- * 与 src/pack/diff.ts 的 normalizeContent 逐字一致（该函数未导出，按仓库约定
- * 各模块持有副本，两处如需调整必须同步修改；理由见模块头注释）。
- *
- * @param text 原始内容
- * @returns 归一化后的内容
- */
-function normalizeContent(text: string): string {
-  return text.replace(/\r\n?/g, "\n").trimEnd();
 }
 
 /**
@@ -440,20 +420,6 @@ async function scanAssetFiles(root: string): Promise<Record<string, string>> {
 // ---------------------------------------------------------------------------
 // 导出函数
 // ---------------------------------------------------------------------------
-
-/**
- * 计算 baseline.json 的完整路径。
- *
- * layout.ts 的 DIR_TTS 常量未导出且本模块不得修改 layout.ts，故按任务书指示
- * 写死拼接 `.tts/baseline.json`（与 src/pack/init.ts 的 .gitignore 条目一致）。
- *
- * @param root 图包工作区根目录（原样拼接，不做 resolve）
- * @returns `<root>/.tts/baseline.json`（路径分隔符跟随平台）
- * @throws root 不是非空字符串时抛出中文错误（调用方编程错误）
- */
-export function baselinePath(root: string): string {
-  return path.join(assertRoot(root), BASELINE_DIR, BASELINE_FILE);
-}
 
 /**
  * 读取基线。

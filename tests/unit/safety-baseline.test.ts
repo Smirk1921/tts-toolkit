@@ -38,7 +38,6 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  baselinePath,
   detectAssetChanges,
   diffBaseline,
   readBaseline,
@@ -46,6 +45,7 @@ import {
   writeBaseline,
   type Baseline,
 } from '../../src/safety/baseline.js';
+import { baselinePath } from '../../src/pack/layout.js';
 import type { ScriptState } from '../../src/session/scripts.js';
 
 // ---------------------------------------------------------------------------

@@ -8,10 +8,12 @@
  * `confirm: z.literal(true)` 在调用侧就挡掉无确认的调用（模型必须显式传
  * confirm: true 才能触发写回），两层防线一致。
  *
- * 返回值是控制通道的 JSON 响应体（`{ok:true, items:<n>}`，结构化 JSON 英文键名，
- * 不走 t()）；失败时 `isError: true`，错误体为 `{error:{code,message,details?}}`
- * （见 errors.ts）。注意写回语义：scriptStates 缺 script / ui 字段时 TTS 会
- * 删除对应内容（协议语义，见 src/session/scripts.ts）。
+ * 返回值是控制通道的 JSON 响应体（`{ok:true, dryRun, pushed, skipped,
+ * backupDir?, baselineConflicts?, assetChanges?, items}`——`items` 是
+ * `pushed + skipped` 的向后兼容别名；结构化 JSON 英文键名，不走 t()）；失败时
+ * `isError: true`，错误体为 `{error:{code,message,details?}}`（见 errors.ts）。
+ * 注意写回语义：scriptStates 缺 script / ui 字段时 TTS 会删除对应内容
+ * （协议语义，见 src/session/scripts.ts）。
  *
  * 本文件使用的 i18n 键：`mcp.tool.tts_push.title`、`mcp.tool.tts_push.description`。
  */

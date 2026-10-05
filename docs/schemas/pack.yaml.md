@@ -6,6 +6,7 @@
 > 适用结构版本：`schema_version: 1`。本文档描述**已实现的真实契约**，不是设想稿。
 >
 > **B3 / Run 2（2026-10-05）修订 §4.3**：补 lfs 三态在 init 之后的变更入口（`tts vcs lfs status|enable|disable|migrate`，详见方案设计 §4.11.1）与三方一致性检查；补 init 三选一的**实际决策路径**（`decideLfs`）；修正初版对 `disabled` / `disabled-no-lfs` 下 `.gitattributes` 的描述（实现是不创建该文件）。字段表与其余小节未改动。
+> **阶段 5 / Run 2（2026-10-05）修订**：新增 `push` 可选子节点（`backup_retention` / `baseline_check`，§4.4）；原 §4.4 `host` / §4.5 `editor.adapter` 顺延为 §4.5 / §4.6，正文内容未变。字段表、示例与 §5 补 `push` 行。
 
 ---
 
@@ -32,6 +33,9 @@
 | `host` | `"steamcloud"` \| `"imgur"` \| `"gdrive"` \| `"dropbox"` \| `"custom"` | 可省略 | `"steamcloud"` | 图床类型，**决定素材上传的目标图床**；取值域 `PACK_HOSTS`（`src/pack/packyaml.ts:45`） | Image host used for uploads |
 | `vcs` | 对象（严格） | ✅ | 无 | 版本控制声明块；当前只含 `lfs` 一个键 | VCS declaration block |
 | `vcs.lfs` | `"enabled"` \| `"disabled"` \| `"disabled-no-lfs"` | ✅ | **无（刻意不设默认）** | git-lfs 三态；见 §4.3，约束 10 要求必须显式三选一 | git-lfs state; deliberately no default |
+| `push` | 对象（严格） | ❌（整块可省） | 允许空映射 `{}` | 阶段 5 写入路径的 push 子配置块；见 §4.4 | Push config block (optional) |
+| `push.backup_retention` | `number`（整数） | `push` 出现时可省略 | `20` | 备份保留份数，整数 **1~100**（越界 / 非整数 → `PACK_INVALID`） | Backup retention count, integer 1–100 |
+| `push.baseline_check` | `boolean` | `push` 出现时可省略 | `true` | push 前是否做基线冲突检测（`false` = 显式跳过，自担风险） | Whether to check baseline conflicts before push |
 | `paths` | 对象（严格） | ✅（键本身必填） | 允许空映射 `{}` | 路径配置块 | Path config block |
 | `paths.workdir` | `string` | 可省略 | `"."` | 工作目录，相对 `pack.yaml` 所在目录 | Working directory, relative to `pack.yaml` |
 | `upload` | 对象（严格） | ✅（键本身必填） | 允许空映射 `{}` | 上传配置块 | Upload config block |
@@ -42,7 +46,9 @@
 > 实测确认（Node 24 + tsx 跑真实 schema）：
 > - 省略 `paths` / `upload` 键会被拒绝（报 `paths 必须是键值对象`、`upload 必须是键值对象`）；写 `paths: {}` / `upload: {}` 则通过；
 > - 省略 `host` 时读出值为 `"steamcloud"`，省略 `paths.workdir` 读为 `"."`，省略 `upload.prefix` 读为 `""`；
-> - `schema_version: 2`、未知顶层键（如 `hostt`）、`host: weibo`、缺失 `workshop_id` 均被拒绝。
+> - `schema_version: 2`、未知顶层键（如 `hostt`）、`host: weibo`、缺失 `workshop_id` 均被拒绝；
+> - `push` 整块可省：写出后磁盘文本**不含** `push` 键，`readPackYaml` 读回 `push === undefined`（不自作主张补默认值）；
+> - `push: {}` 会补出 `backup_retention: 20` / `baseline_check: true`；`push` 内未知键（如 `extra`）被拒（`PACK_INVALID`，message 含 `push：push 含有无法识别的字段：extra`）。
 
 ---
 
@@ -61,6 +67,10 @@ host: steamcloud             # steamcloud | imgur | gdrive | dropbox | custom；
 
 vcs:
   lfs: enabled               # enabled | disabled | disabled-no-lfs（无默认，必须显式写）
+
+push:                        # 可选块，整块可省（阶段 5）；缺省语义见 §4.4
+  backup_retention: 20       # 备份保留份数（整数 1-100，默认 20）
+  baseline_check: true       # push 前是否做基线冲突检测（默认 true）
 
 paths:
   workdir: .                 # 相对 pack.yaml 所在目录
@@ -96,6 +106,25 @@ paths:
   workdir: .
 upload:
   prefix: ""
+```
+
+带 `push` 节点时（实测：`writePackYaml({...最小包, push: {backup_retention: 10, baseline_check: false}})` 的落盘输出；`push: {}` 则补成 `20` / `true`）：
+
+```yaml
+schema_version: 1
+name: 我的图包
+workshop_id: null
+source_mod: null
+host: steamcloud
+vcs:
+  lfs: disabled-no-lfs
+paths:
+  workdir: .
+upload:
+  prefix: ""
+push:
+  backup_retention: 10
+  baseline_check: false
 ```
 
 ---
@@ -195,13 +224,31 @@ git lfs pull --include="decks/冒险牌堆/**"   # 只拉特定路径
 - `src/vcs/lfs.ts` 的 `isLfsPointer(filePath)` 可判断单个文件是不是 lfs 指针（读文件头是否以 `version https://git-lfs` 开头），供需要"这张图到底可用不可用"的工具代码使用。
 - **不做**：本工具**不主动**帮用户跑 `git lfs pull`——是否下载真实图片是用户的选择（体积 vs 可用性），工具只报告状态。
 
-### 4.4 `host` 决定图床上传目标
+### 4.4 `push` 子节点（阶段 5 写入路径的可选配置）
+
+```yaml
+push:                        # 可选块，整块可省
+  backup_retention: 20       # 备份保留份数（1-100，默认 20）
+  baseline_check: true       # push 前是否做基线冲突检测（默认 true）
+```
+
+- **可选节点**：schema 里是 `z.optional(z.strictObject({...}))`（`src/pack/packyaml.ts:158-170`）——`pack.yaml` 不写 `push` 键完全合法，`tts pack init` 的初始模板也不含它（向后兼容旧清单）。
+- **内层默认值**：只要 `push` 键出现，`backup_retention` 缺省填 `20`、`baseline_check` 缺省填 `true`（zod `.default()`）；`push: {}` 合法，读回即 `{backup_retention: 20, baseline_check: true}`（实测见 §2）。
+- **整块缺省语义**：省略 `push` 时 `readPackYaml` 返回的 `push` 是 `undefined`（**不会**自动补出默认值，`src/pack/packyaml.ts:239-241`）；语义上等价于 `{backup_retention: 20, baseline_check: true}`。
+- **zod strictObject**：内层任何未列出的键都会被拒（`PACK_INVALID`）——把 `backup_retention` 拼成 `backupRetention` 会直接报错，不会静默忽略（`src/pack/packyaml.ts:158-170`；与全文件同一策略，见 §1）。
+- **取值约束**：`backup_retention` 必须是**整数**且 ∈ [1, 100]（`0` / `101` / `2.5` 均报 `PACK_INVALID`）；`baseline_check` 必须是布尔值。
+- **消费现状（重要）**：本节点是**契约先行**——当前仓库中除 schema 定义外**没有**读取 `pack.push` 的代码路径（`grep -rn -e backup_retention -e baseline_check src/` 只命中 `packyaml.ts` 的 schema 与 `watch.ts` 的注释）。实际生效的口径来自命令参数 / hub 请求字段：`tts pack push --backup-retention` / `--no-baseline-check`（CLI 校验 1~100）与 `POST /v1/push` 的 `backupRetention` / `skipBaselineCheck`（契约见 `docs/schemas/hub-control.md` §4.11）；`writePackYaml` 会原样保留并规范化本节点。
+- 两个字段的实际行为依据：
+  - `backup_retention` → `createBackup({retention})`：只保留最新 N 份 `.tts/backups/`，其余删除（`<=0` 视为不清理；`src/safety/backup.ts:411`、`:546-559`）。
+  - `baseline_check: false` → 显式跳过「游戏侧相对基线被人改过」的拦截（`skipBaselineCheck`），冲突仍记入 push 结果；这是**自担风险**开关（`src/pack/push.ts:445-446`、`:669-675`）。基线契约见 `docs/schemas/baseline.json.md`。
+
+### 4.5 `host` 决定图床上传目标
 
 - 默认 `steamcloud`（`src/pack/packyaml.ts:128-130`，与 `方案设计.md:1532` §6.5 的"默认 `steamcloud`（用户已定）"一致）。
 - 阶段 3 的 `tts assets upload` 按此字段选择 `ImageHost` 实现：素材改动后把新文件传到对应图床，拿回 URL 再写回存档（`方案设计.md:663`）。
 - **`pack.yaml` 的 `host` 与 `assets.yaml` 的 `assets[].host` 是两回事**：前者是"这个包以后往哪传"的策略，后者是"这一条素材现在挂在哪个图床"的事实，历史素材可能来自不同图床。死链迁移按条目上的 `host` 走，不要用包级 `host` 覆盖判断。
 
-### 4.5 `editor.adapter` 可扩展
+### 4.6 `editor.adapter` 可扩展
 
 `editor` 块整体可选，当前 schema 只接受 `adapter: "vscode"`（`src/pack/packyaml.ts:131-136`）。这是给"外部编辑器适配层"（阶段 6）预留的入口：将来新增适配器（如自研插件、其他编辑器）时**扩充这个枚举**，而不是新增平行字段。B2/B3 当前**不应读写 `editor`**，也不要依赖它存在。
 
@@ -217,6 +264,7 @@ git lfs pull --include="decks/冒险牌堆/**"   # 只拉特定路径
 - 错误统一为 `PackError`（`src/pack/packyaml.ts:63`），带机器可读 `code`；**按 code 分支，不要解析 message 文本**。
 - `writePackYaml` 的入参类型是 `PackYaml`（schema 输出类型），但函数内部仍会再校验一次：调用方构造的运行时数据不可信。B2/B3 构造 `PackYaml` 后直接调用即可，不必自己预校验。
 - `host` / `paths.workdir` / `upload.prefix` 三个默认值只在**读取与写入时**填充；直接读磁盘上的原始 YAML 文本时它们可能不存在，别假设文件里一定有。
+- `push` 节点更特殊（见 §4.4）：**节点整块缺省时不会被补出**（`readPackYaml` 返回 `push: undefined`），只有节点出现时其内层默认值才在读写两侧填充。需要"生效值"的调用方应写 `pack.push?.backup_retention ?? 20` 这类兜底，不要假设 `pack.push` 一定存在。
 
 ---
 
@@ -227,3 +275,4 @@ git lfs pull --include="decks/冒险牌堆/**"   # 只拉特定路径
 | 2026-10-04 | 初版（窗口 B1 / Run 2 模板化）。契约来自 `src/pack/packyaml.ts`，Run 2 未修改该模块。 |
 | 2026-10-05 | B3 / Run 2 修订 §4.3：三态可在 init 后经 `tts vcs lfs status\|enable\|disable` 变更、三方一致性检查（`inspectLfs` / `vcs verify` 的错误码与 severity）、`lfs_status` 冗余副本指向 `docs/schemas/registry.yaml.md`；修正 `.gitattributes` 在 `disabled` / `disabled-no-lfs` 下的描述。 |
 | 2026-10-05 | B3 / Run 2 核验修订 §4.3：补 init 实际决策路径图（`decideLfs`，含 `skipped` 中止分支）；明确设计 §4.11.1 的"版本过老"分支当前**未实现**；补 `tts vcs lfs status`；引用行号校正（init.ts、方案设计.md），并校正 §4.4 两处失效的设计行号引用（1524→1532、655→663）。 |
+| 2026-10-05 | 阶段 5 / Run 2 修订：新增 §4.4 `push` 子节点（可选；`backup_retention` 整数 1~100 默认 20、`baseline_check` 默认 true；内层 `strictObject` 未知键拒绝；节点整块缺省时读回 `undefined` 而不补默认值）；字段表、完整示例与 §5「默认值填充」说明同步；原 §4.4 `host` / §4.5 `editor.adapter` 顺延为 §4.5 / §4.6（内容未变）。落盘/回读行为为本文档窗口用真实模块实测（`npx tsx` + Node 24，输出见 §2 / §3）。 |

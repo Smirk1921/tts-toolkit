@@ -277,7 +277,7 @@ export async function findPack(packsRoot: string, dir: string): Promise<PackEntr
 | `upstream` 本地包为 `null` | `upstream: null`（非缺键） | ✅ 已实现（§4.1） |
 | `tts pack list` / `tts pack list --dirty` | `listSub`；`--dirty` 逐包实测 `git status --porcelain`，探测失败显示 `?` 且按不脏过滤 | ✅ 已实现；设计未细化"探测失败"语义，实现选择"宁可不显示不误报" |
 | `tts pack status <dir>` | `packStatusSub` → `findPack` | ✅ 已实现；找不到以退出码 1 + stderr 提示 |
-| `tts pack open <dir>`（打开工作目录 / 用编辑器打开） | `openSub`；Windows 调 `explorer`，其他平台打印绝对路径 | ⚠️ 部分实现：**文件管理器打开已实现**，"用编辑器打开"未实现（`pack.yaml` 的 `editor.adapter` 仍为预留，见 `docs/schemas/pack.yaml.md` §4.5） |
+| `tts pack open <dir>`（打开工作目录 / 用编辑器打开） | `openSub`；Windows 调 `explorer`，其他平台打印绝对路径 | ⚠️ 部分实现：**文件管理器打开已实现**，"用编辑器打开"未实现（`pack.yaml` 的 `editor.adapter` 仍为预留，见 `docs/schemas/pack.yaml.md` §4.6） |
 | （设计未提并发保护） | 乐观锁 mtime 校验（搁置项 S6，§6.6） | **实现新增**：`upsertPack` / `removePack` 写盘前核对，冲突抛 `REGISTRY_CONFLICT` |
 | 设计 §4.9：packs 容器本身不是 git 仓库，每个图包目录是独立仓库 | 注册表只存条目，不创建 / 管理仓库；`dir` 仅为一级子目录名（§6.2） | ✅ 边界一致：注册表不碰各包的 git 状态，`list` 的 dirty 列是只读探测 |
 

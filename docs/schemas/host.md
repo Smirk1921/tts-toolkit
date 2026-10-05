@@ -22,7 +22,7 @@
 ### 1.1 与 `pack.yaml` 的 `host` 字段的关系
 
 `pack.yaml` 的 `host` 是**图包级默认图床名**，取值域受 `pack.yaml` schema 限制：
-`steamcloud | imgur | gdrive | dropbox | custom`（`src/pack/packyaml.ts:45`；契约见 `docs/schemas/pack.yaml.md` §4.4）。
+`steamcloud | imgur | gdrive | dropbox | custom`（`src/pack/packyaml.ts:45`；契约见 `docs/schemas/pack.yaml.md` §4.5）。
 
 - `tts assets upload`（`src/cli/commands/assets.ts:345`）读 `pack.yaml.host` 后调 `resolveHost`；`--host <id>` 覆盖它。
 - ⚠️ **`imgur` / `gdrive` / `dropbox` / `custom` 不是本工具注册的 `ImageHost` id**，直接跑会命中 `HOST_NOT_FOUND`；CLI 会明确提示改用 `--host` 指定配置声明的图床（`cli.assets.upload.hostNotResolvable`）。这是**有意为之**：这些名字只是"素材历史上挂在哪个图床"的事实标签，不是可调用后端。

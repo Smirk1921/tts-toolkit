@@ -46,7 +46,8 @@
         "diff": {
           "description": "对比工作区与运行中 TTS 的脚本/UI 差异",
           "option": {
-            "root": "工作区根目录"
+            "root": "工作区根目录",
+            "unified": "输出逐行 unified diff（缺省只列对象级差异）"
           }
         },
         "init": {
@@ -67,9 +68,15 @@
           }
         },
         "push": {
-          "description": "列出将推回游戏的脚本/UI（骨架实现，阶段 5 才实际推送）",
+          "description": "把工作区脚本/UI 写回运行中的 TTS（默认 dry-run，--yes 才实写）",
           "option": {
-            "root": "工作区根目录"
+            "root": "工作区根目录",
+            "dryRun": "只打印摘要，不写回游戏（缺省开启；给了 --yes 才实写）",
+            "yes": "跳过确认，直接写回游戏（不给则恒为 dry-run）",
+            "forceScriptsOnly": "检测到素材改动时仍强制只推脚本",
+            "noBackup": "写回前不备份游戏内脚本/UI",
+            "noBaselineCheck": "跳过基线冲突检测",
+            "backupRetention": "备份保留份数（1-100，缺省 20）"
           }
         },
         "unpack": {
@@ -139,6 +146,19 @@
             "snapshot": "显式快照文件（存档 JSON / .ttsmod），优于按工坊 ID 探测",
             "packsRoot": ".registry.yaml 所在的 packs_root（缺省图包根的父目录）"
           }
+        }
+      },
+      "watch": {
+        "description": "监听脚本/UI 变化，防抖后自动 push 回运行中的 TTS",
+        "argument": {
+          "root": "工作区根目录（默认当前目录）"
+        },
+        "option": {
+          "dryRun": "只打印摘要，不写回游戏（缺省开启；给了 --yes 才实写）",
+          "yes": "实际写回游戏（缺省为 dry-run；--yes 优先于 --dry-run）",
+          "debounce": "文件变化后的防抖毫秒数（正整数，缺省 300）",
+          "forceScriptsOnly": "检测到素材改动时仍强制只推脚本",
+          "backupRetention": "备份保留份数（1-100，缺省 20）"
         }
       },
       "deck": {
@@ -375,6 +395,15 @@
       "version": "脚本引擎版本：{version}",
       "objects": "当前存档对象数：{count}"
     },
+    "safety": {
+      "confirm": {
+        "prompt": "确认执行以上写入？[y/N]",
+        "proceed": "已确认，开始写入",
+        "aborted": "已取消，未写入任何内容",
+        "nonInteractive": "当前不是交互式终端，写入已取消：如需继续请显式传 --yes",
+        "more": "…另有 {count} 条未显示"
+      }
+    },
     "pack": {
       "build": {
         "done": "已写出 {outPath}：替换 {scripts} 脚本 / {ui} UI / {objects} 对象",
@@ -410,7 +439,14 @@
         "done": "已拉取 {scripts} 脚本 / {ui} UI，跳过 {skipped} 项（与本地一致）"
       },
       "push": {
-        "note": "（骨架实现：阶段 5 才实际推送，本次仅列出将推送的清单）"
+        "note": "（仅列出将推送的清单；实际推送请用 tts pack push）",
+        "noteEmpty": "没有需要推送的改动",
+        "noteDryRun": "试运行：将推送 {pushed} 个对象，跳过 {skipped} 个（未写回游戏）",
+        "noteDone": "推送完成：已写回 {pushed} 个对象，跳过 {skipped} 个",
+        "viaHub": "hub 在线：本次推送委托 hub 执行",
+        "dryRunSummary": "推送试运行：将推送 {pushed} 个对象，跳过 {skipped} 个（未写回游戏）",
+        "pushedSummary": "推送完成：已写回 {pushed} 个对象，跳过 {skipped} 个；备份目录：{backupDir}",
+        "confirmMessage": "即将把 {count} 个对象的脚本/UI 写回运行中的 TTS"
       },
       "unpack": {
         "done": "已从 {save} 解包到 {outDir}：{scripts} 脚本，{ui} UI，{objects} 对象"
@@ -458,6 +494,19 @@
         "conflictHint": "解决后执行 git add <文件> 并 git commit 完成合并（放弃合并可用 git merge --abort）",
         "needWorkshopId": "--as-upstream 需要正整数工坊 ID 作为位置参数"
       }
+    },
+    "watch": {
+      "started": "watch 已启动：监听 {root}（dry-run：{dryRun}）",
+      "watching": "正在监听脚本/UI 变化（Ctrl+C 停止）",
+      "viaHub": "hub 在线：本轮推送委托 hub 执行",
+      "pushing": "检测到改动，开始推送…",
+      "pushOk": "推送完成：已写回 {pushed} 个对象，跳过 {skipped} 个；备份目录：{backupDir}",
+      "dryRunSummary": "试运行：将推送 {pushed} 个对象，跳过 {skipped} 个（未写回游戏）",
+      "dryRunMismatch": "hub 返回的 dry-run 与请求不一致（期望 {expected}，实际 {actual}）：本轮按失败处理，未确认写入",
+      "pushFailed": "push 失败（{code}）：{message}",
+      "stopped": "watch 已停止",
+      "invalidDebounce": "--debounce 需要正整数毫秒（收到 {value}）",
+      "invalidBackupRetention": "--backup-retention 需要 1-100 的整数（收到 {value}）"
     },
     "deck": {
       "slice": {
@@ -810,6 +859,30 @@
         "snapshotNotFound": "未找到上游工坊快照：{detail}",
         "stateInvalid": "仓库状态不允许同步上游：{detail}"
       }
+    },
+    "safety": {
+      "backup": {
+        "dirInvalid": "备份目录无效：{detail}",
+        "manifestInvalid": "备份清单无效：{path}（{detail}）",
+        "timestampNotFound": "未找到时间戳为 {timestamp} 的备份",
+        "writeFailed": "备份写入失败：{detail}",
+        "restoreFailed": "备份还原失败：{detail}",
+        "pruneFailed": "清理过期备份失败：{detail}"
+      }
+    },
+    "baseline": {
+      "readFailed": "基线文件读取失败：{path}（{detail}）",
+      "writeFailed": "基线文件写入失败：{path}（{detail}）",
+      "assetScanFailed": "素材扫描失败：{detail}"
+    },
+    "push": {
+      "assetChangesDetected": "⚠️  检测到素材改动（decks/ 或 objects/）共 {changedCount} 处；push 协议不接收素材字段，此类改动无法通过热重载生效：\n{files}\n\n正确流程：\n  1) tts assets upload        # 把改动的素材传到图床\n  2) tts pack build           # 合成新存档 JSON\n  3) 在游戏里加载新存档（或用 tts pack export 打成 .ttsmod）\n  4) 加载后再用 tts pack push 推脚本改动（如有）\n\n如确认只推脚本、不管素材，可加 --force-scripts-only 强制继续",
+      "baselineConflict": "检测到基线冲突：游戏内的脚本/UI 相对基线已被改动（拒绝覆盖，以免丢失未拉取的改动）。请先 tts pull 对账；确认自担风险可加 --no-baseline-check 跳过检测：\n{details}",
+      "aborted": "已取消：确认门未放行，未写入任何内容",
+      "verifyFailed": "回读校验失败：写回后从游戏内读回的内容与发送内容不一致（已中止，未更新基线）。可用 tts pull 对比现状，或从 .tts/backups 还原：\n{details}"
+    },
+    "cli": {
+      "invalidBackupRetention": "--backup-retention 需要 1-100 的整数"
     },
     "ATLAS_TOO_MANY_CELLS": "图集网格所需格数超出上限：{msg}",
     "ATLAS_GRID_TOO_FINE": "图集网格过细，单格宽或高为 0：{msg}",

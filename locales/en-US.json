@@ -46,7 +46,8 @@
         "diff": {
           "description": "Diff workspace against running TTS scripts/UI",
           "option": {
-            "root": "Workspace root"
+            "root": "Workspace root",
+            "unified": "Output line-level unified diffs (default: object-level differences only)"
           }
         },
         "init": {
@@ -67,9 +68,15 @@
           }
         },
         "push": {
-          "description": "List scripts/UI to push back to game (skeleton; actual push in phase 5)",
+          "description": "Write workspace scripts/UI back to the running TTS (dry-run by default; --yes to actually push)",
           "option": {
-            "root": "Workspace root"
+            "root": "Workspace root",
+            "dryRun": "Print summary only; do not write to the game (default on; pass --yes to actually write)",
+            "yes": "Skip confirmation and write to the game (without it, push always runs as dry-run)",
+            "forceScriptsOnly": "Push scripts only even when asset changes are detected",
+            "noBackup": "Do not back up the in-game scripts/UI before writing",
+            "noBaselineCheck": "Skip baseline conflict detection",
+            "backupRetention": "Number of backups to keep (1-100, default 20)"
           }
         },
         "unpack": {
@@ -139,6 +146,19 @@
             "snapshot": "Explicit snapshot file (save JSON / .ttsmod), preferred over workshop-ID lookup",
             "packsRoot": "packs_root containing .registry.yaml (defaults to the pack root's parent)"
           }
+        }
+      },
+      "watch": {
+        "description": "Watch scripts/UI for changes and auto-push to the running TTS after a debounce",
+        "argument": {
+          "root": "Workspace root (default: current directory)"
+        },
+        "option": {
+          "dryRun": "Print summary only; do not write to the game (default on; pass --yes to actually write)",
+          "yes": "Actually write to the game (default is dry-run; --yes takes precedence over --dry-run)",
+          "debounce": "Debounce in milliseconds after a file change (positive integer, default 300)",
+          "forceScriptsOnly": "Push scripts only even when asset changes are detected",
+          "backupRetention": "Number of backups to keep (1-100, default 20)"
         }
       },
       "deck": {
@@ -375,6 +395,15 @@
       "version": "Script engine version: {version}",
       "objects": "Objects in the current save: {count}"
     },
+    "safety": {
+      "confirm": {
+        "prompt": "Proceed with the writes above? [y/N]",
+        "proceed": "Confirmed; writing now",
+        "aborted": "Cancelled; nothing was written",
+        "nonInteractive": "Not an interactive terminal, so the write was cancelled: pass --yes explicitly to proceed",
+        "more": "…{count} more not shown"
+      }
+    },
     "pack": {
       "build": {
         "done": "Wrote {outPath}: replaced {scripts} scripts / {ui} UIs / {objects} objects",
@@ -410,7 +439,14 @@
         "done": "Pulled {scripts} scripts / {ui} UIs; skipped {skipped} (unchanged)"
       },
       "push": {
-        "note": "(Skeleton: actual push in phase 5; this run only lists what would be pushed)"
+        "note": "(Only lists what would be pushed; use tts pack push to actually push)",
+        "noteEmpty": "No changes to push",
+        "noteDryRun": "Dry run: would push {pushed} object(s), skip {skipped} (nothing written to the game)",
+        "noteDone": "Push complete: wrote {pushed} object(s), skipped {skipped}",
+        "viaHub": "hub online: delegating this push to the hub",
+        "dryRunSummary": "Push dry run: would push {pushed} object(s), skip {skipped} (nothing written to the game)",
+        "pushedSummary": "Push complete: wrote {pushed} object(s), skipped {skipped}; backup dir: {backupDir}",
+        "confirmMessage": "About to write the scripts/UI of {count} object(s) back to the running TTS"
       },
       "unpack": {
         "done": "Unpacked {save} to {outDir}: {scripts} scripts, {ui} UIs, {objects} objects"
@@ -458,6 +494,19 @@
         "conflictHint": "After resolving, run git add <file> and git commit to finish the merge (or git merge --abort to give up)",
         "needWorkshopId": "--as-upstream requires a positive integer workshop ID as the positional argument"
       }
+    },
+    "watch": {
+      "started": "watch started: watching {root} (dry-run: {dryRun})",
+      "watching": "Watching scripts/UI for changes (Ctrl+C to stop)",
+      "viaHub": "hub online: delegating this push to the hub",
+      "pushing": "Change detected, pushing…",
+      "pushOk": "Push complete: wrote {pushed} object(s), skipped {skipped}; backup dir: {backupDir}",
+      "dryRunSummary": "Dry run: would push {pushed} object(s), skip {skipped} (nothing written to the game)",
+      "dryRunMismatch": "hub dry-run echo mismatch (expected {expected}, got {actual}); treating this cycle as failed without confirming the write",
+      "pushFailed": "push failed ({code}): {message}",
+      "stopped": "watch stopped",
+      "invalidDebounce": "--debounce requires a positive integer number of milliseconds (got {value})",
+      "invalidBackupRetention": "--backup-retention requires an integer between 1 and 100 (got {value})"
     },
     "deck": {
       "slice": {
@@ -810,6 +859,30 @@
         "snapshotNotFound": "Upstream workshop snapshot not found: {detail}",
         "stateInvalid": "Repository state does not allow syncing upstream: {detail}"
       }
+    },
+    "safety": {
+      "backup": {
+        "dirInvalid": "Backup directory invalid: {detail}",
+        "manifestInvalid": "Backup manifest invalid: {path} ({detail})",
+        "timestampNotFound": "No backup found with timestamp {timestamp}",
+        "writeFailed": "Backup write failed: {detail}",
+        "restoreFailed": "Backup restore failed: {detail}",
+        "pruneFailed": "Failed to prune expired backups: {detail}"
+      }
+    },
+    "baseline": {
+      "readFailed": "Failed to read baseline file: {path} ({detail})",
+      "writeFailed": "Failed to write baseline file: {path} ({detail})",
+      "assetScanFailed": "Asset scan failed: {detail}"
+    },
+    "push": {
+      "assetChangesDetected": "⚠️  Asset changes detected under decks/ or objects/ ({changedCount} in total); the push protocol does not accept asset fields, so these changes cannot take effect via hot reload:\n{files}\n\nCorrect workflow:\n  1) tts assets upload        # upload the changed assets to the image host\n  2) tts pack build           # build the new save JSON\n  3) load the new save in-game (or pack it into a .ttsmod with tts pack export)\n  4) after loading, push script changes (if any) with tts pack push\n\nIf you only want to push scripts, add --force-scripts-only to proceed",
+      "baselineConflict": "Baseline conflict detected: the in-game scripts/UI have changed relative to the baseline, so the write was refused to avoid overwriting unpulled changes. Run tts pull first to reconcile; pass --no-baseline-check to skip the check at your own risk:\n{details}",
+      "aborted": "Cancelled: the confirmation gate did not approve; nothing was written",
+      "verifyFailed": "Read-back verification failed: the content read back from the game does not match what was sent (aborted before updating the baseline). Use tts pull to compare, or restore from .tts/backups:\n{details}"
+    },
+    "cli": {
+      "invalidBackupRetention": "--backup-retention requires an integer between 1 and 100"
     },
     "ATLAS_TOO_MANY_CELLS": "Atlas grid needs too many cells: {msg}",
     "ATLAS_GRID_TOO_FINE": "Atlas grid is too fine (a cell would be 0 pixels wide or tall): {msg}",

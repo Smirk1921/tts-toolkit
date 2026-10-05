@@ -1,19 +1,19 @@
 // src/pack/push.ts
 /**
- * push：图包工作区 → 运行中的 TTS（脚本 / UI 写回）——**骨架实现**。
+ * push：图包工作区 → 运行中的 TTS（脚本 / UI 写回）。
  *
- * 阶段边界（本窗口只做第 1 步）：
- * - 本模块当前**不连接 TTS、不调用 saveAndPlay**，只把"将要推送什么"收集成清单，
- *   真正的 Save & Play 写入在阶段 5 接通（见 施工流程.md 阶段 5 任务 5.4 / 5.6，
- *   以及方案设计 §11.6）；
- * - 因此 {@link collectPushItems} 是纯离线操作（只读 pack.yaml 与工作区文件），
- *   不需要游戏运行，可在测试里直接断言。
+ * 本模块包含两个函数：
+ * - {@link collectPushItems}：纯离线清单收集器（B1 建；不连 TTS、不调 saveAndPlay，
+ *   只把"将要推送什么"扫成清单）。当前主要供内部使用——阶段 5 的
+ *   {@link pushSaveAndPlay} 在它的结果之上组装完整 scriptStates。
+ * - {@link pushSaveAndPlay}：阶段 5 完整推送流水线（备份 → 基线校验 → 素材检测 →
+ *   过滤无变化 → 确认 → saveAndPlay → 回读校验 → 更新 baseline）。详见下方 JSDoc。
  *
- * 职责（当前窗口）：
+ * 职责（{@link collectPushItems}）：
  * 1. {@link readPackYaml} 校验工作区（pack.yaml 缺失 / 损坏一律抛出，不静默跳过）；
  * 2. 扫 `scripts/`（`.lua`）与 `ui/`（`.xml`）目录，按文件名解析 guid 与 name；
  * 3. 按 guid 合并成 {@link PushItem} 清单（脚本与 UI 都记在同一个对象上）；
- * 4. 返回 {@link PushResult}：清单 + 待推送对象数 + 告知"阶段 5 才实际推送"的说明文字。
+ * 4. 返回 {@link PushResult}：清单 + 待推送对象数 + 中文说明文字。
  *
  * 文件名解析规则（与 {@link scriptFileName} / {@link uiFileName} 的落盘命名互为逆运算，
  * 也与 pack/build.ts 的 guidFromFileName 约定一致：**只认第一个点之前的 guid**，
@@ -50,7 +50,7 @@
  * - "PUSH_FAILED" 其余失败（scripts/ / ui/ 目录读取失败等 IO 错误）
  *
  * 本模块新增的 i18n 键（locales/*.json 由 Run 2 补齐；缺键时 t() 原样输出键名）：
- * - `cli.pack.push.note` {count} —— 告知"阶段 5 才实际推送"的说明文字
+ * - `cli.pack.push.note` {count} —— 说明"仅列出清单，实际推送请用 tts pack push"的文字
  * - `error.pack.push.failed` {detail}
  *
  * ---------------------------------------------------------------------------
@@ -209,7 +209,7 @@ export interface PushResult {
   items: PushItem[];
   /** 将要推送的对象数（含 Global；= items.length） */
   wouldPush: number;
-  /** 说明文字（中文、经 t()）：告知用户阶段 5 才实际推送 */
+  /** 说明文字（中文、经 t()）：告知用户本函数仅列清单，实际推送用 tts pack push */
   note: string;
 }
 
@@ -357,7 +357,7 @@ function compareItems(a: PushItem, b: PushItem): number {
  * 3. 扫 `<root>/scripts`（`.lua`）与 `<root>/ui`（`.xml`），按文件名解析 guid 与 name，
  *    按 guid 合并成 {@link PushItem}（同一对象的脚本与 UI 合成一条）；
  * 4. 返回 {@link PushResult}：清单 + 待推送对象数 + 中文说明文字
- *    （note 经 `t("cli.pack.push.note", { count })` 生成，明确告知阶段 5 才实际推送）。
+ *    （note 经 `t("cli.pack.push.note", { count })` 生成，提示用户实际推送请用 tts pack push）。
  *
  * 本函数**只读**、不连 TTS、不调 saveAndPlay、不写任何文件；`dryRun` 在当前实现下
  * 不改变行为（没有副作用可关闭），仅为阶段 5 保留接口形状。

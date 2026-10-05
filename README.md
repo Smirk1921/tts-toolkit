@@ -2,7 +2,7 @@
 
 面向《桌游模拟器》（Tabletop Simulator）图包作者的命令行工具：通过 TTS 的**外部编辑器协议**直连运行中的游戏，只读地检查连接状态、执行 Lua、拉取全部脚本与 UI、盘点素材 URL；并支持**离线**的图包工作区管理（unpack / build / pull / push / diff），所有面向用户的输出支持中文 / 英文双语。
 
-> 当前进度：阶段 1（基础设施 + 协议层 + 只读 CLI）+ 阶段 2A（图包工作区）+ 2B（卡牌图集）+ 2C（多图包与版本控制）+ 阶段 3（素材导入 / 图床 / 打包分发，窗口 C）+ 阶段 4（hub + MCP，窗口 D）。`status / exec / pull / assets / config` 等命令只读；`pack init/unpack/build/export/import/sync-upstream`、`import / host / fetch / migrate / deck / vcs / review` 离线或按需联网；`pack pull/diff` 与运行中 TTS 交互；`pack push` 为骨架（阶段 5 才实际写入）；`tts hub` 启动常驻守护进程，`tts-mcp` 为 MCP stdio 服务（见 §10）。
+> 当前进度：阶段 1（基础设施 + 协议层 + 只读 CLI）+ 阶段 2A（图包工作区）+ 2B（卡牌图集）+ 2C（多图包与版本控制）+ 阶段 3（素材导入 / 图床 / 打包分发，窗口 C）+ 阶段 4（hub + MCP，窗口 D）+ 阶段 5（写入路径，窗口 E）。`status / exec / pull / assets / config` 等命令只读；`pack init/unpack/build/export/import/sync-upstream`、`import / host / fetch / migrate / deck / vcs / review` 离线或按需联网；`pack pull/diff` 与运行中 TTS 交互；`pack push` 为完整安全流水线（默认 dry-run，`--yes` 才实写，见 §11）；`tts watch` 文件监听自动 push；`tts hub` 启动常驻守护进程，`tts-mcp` 为 MCP stdio 服务（见 §10）。
 
 ## 环境要求
 
@@ -134,7 +134,7 @@ $ tts pack build --root ./my-pack --dry-run
 - **`tts pack diff`** 对比工作区与运行中 TTS 的脚本/UI 差异（added/modified/deleted）。
 - **`tts pack build`** 把工作区合成 TTS 可加载的存档 JSON（约束 8：读 skeleton + 按 GUID 定点替换，未改动对象与骨架逐字节一致）；`--dry-run` 只打印摘要。
 
-工作区契约文档见 [`docs/schemas/`](./docs/schemas/)（`pack.yaml` / `deck.yaml` / `assets.yaml` / `cards.csv` / `objects.csv` / `registry.yaml` 六份，B2/B3 必读；另加阶段 3 的 `import.yaml` / `host` / `ttsmod` 三份）。
+工作区契约文档见 [`docs/schemas/`](./docs/schemas/)（`pack.yaml` / `deck.yaml` / `assets.yaml` / `cards.csv` / `objects.csv` / `registry.yaml` 六份，B2/B3 必读；另加阶段 3 的 `import.yaml` / `host` / `ttsmod` 三份、阶段 4 的 `hub-control` 一份、阶段 5 的 `baseline.json` 一份，共十一份）。
 
 ### 7. 卡牌图集：`tts deck *`（阶段 2B 新增）
 
@@ -491,7 +491,7 @@ hub 已停止
 
 `tts status` / `tts pull` / `tts exec` 每条命令执行前都会现场探测一次 hub（`GET /v1/status`，800 ms 超时，**不缓存**）：
 
-- **hub 在线**：委托执行——`pull` / `exec` 首行打印一行「经 hub」提示（分别为 `cli.pull.viaHub` / `cli.exec.viaHub` 的文案），`status` 报告经 hub 的连接（含控制通道地址）；实际动作在 hub 进程内完成（它持有 39998 的独占绑定）。注意 `pull` 目前受 §10.4 的已知实现限制影响（hub 运行期该路由返回 500，委托失败退出 1）。
+- **hub 在线**：委托执行——`pull` / `exec` 首行打印一行「经 hub」提示（分别为 `cli.pull.viaHub` / `cli.exec.viaHub` 的文案），`status` 报告经 hub 的连接（含控制通道地址）；实际动作在 hub 进程内完成（它持有 39998 的独占绑定）。`pack pull` / `pack diff` / `pack push` 同样支持委托（阶段 5 已修复 hub 运行期 39998 二次绑定问题，见 §10.4）。
 - **hub 不在线**：独立模式，与阶段 3 完全一致（临时独占绑定 39998 后直连 TTS）。
 - **委托失败**（hub 中途退出、协议错误等）：输出 `error.hub.delegateFailed` 并退出 1，**不回退独立模式**——hub 在线期间 39998 由 hub 持有，回退也绑不上端口。
 - 其余命令（`assets / config / pack / deck / vcs / import / host / fetch / migrate / review`）不经过 hub，行为不变。
@@ -588,8 +588,8 @@ $ curl -X POST http://127.0.0.1:39995/v1/hub/shutdown
 
 - 控制通道**有意不暴露** `pack export` / `pack import`（`.ttsmod`）/ `pack sync-upstream` / `review`（打包、上游合并与审批门禁不进 HTTP 面）。
 - `/v1/deck/slice` 与 `/v1/deck/plan` 的请求体就是 CLI 同名选项（`sheetPath` / `savePath` / `outDir` 等绝对路径）；HTTP 场景无交互，多候选时 slice 报 `SLICE_AMBIGUOUS`（`HUB_PACK_ERROR`），用 `deckKey` / `deckGuid` 消歧后重试。
-- `/v1/push` 是本阶段**唯一实际写回游戏**的通路（`confirm:true` 必填）；CLI 的 `pack push` 仍是清单骨架（阶段 5 补 baseline hash / 备份 / 素材检测）。
-- ⚠️ **已知实现限制（阶段 4，待修）**：`POST /v1/scripts/pull` 与 `POST /v1/diff` 在 hub 运行期会返回 500 `HUB_INTERNAL_ERROR`（`PortInUseError`）——`pullFromGame` / `diffWorkspace` 内部仍经 `withEditorServer` 重新独占绑定 39998，与 hub 冲突；修复方向（会话注入）与影响范围见 [`docs/schemas/hub-control.md`](./docs/schemas/hub-control.md) §4.2 / §4.10。
+- `/v1/push` 与 CLI `tts pack push` 共用同一条完整安全流水线（阶段 5：备份 → 基线 / 素材检测 → 写回 → 回读校验 → 更新基线，见 §11.2）；HTTP 层 `confirm:true` 必填。
+- ✅ **阶段 4 已知问题 #1（已修复，阶段 5）**：`/v1/scripts/pull` 与 `/v1/diff` 在 hub 运行期不再返回 500——`pullFromGame` / `diffWorkspace` 增加可选会话注入（`server` 参数复用 hub 已绑定的 39998），hub 路由传入 `daemon.server`；细节见 [`docs/schemas/hub-control.md`](./docs/schemas/hub-control.md) §4.2 / §4.10。
 - 完整契约（字段级）见 [`docs/schemas/hub-control.md`](./docs/schemas/hub-control.md)（第 10 份契约文档）。
 
 #### 10.5 MCP 服务（`tts-mcp`）
@@ -616,12 +616,12 @@ $ tts-mcp        # MCP 客户端按需拉起（stdout 是协议通道，诊断�
 | `tts_deck_plan` | 替换计划 dry-run（POST `/v1/deck/plan`） | 只读 | `savePath`（路径或已解析对象）、`rules`（数组） |
 | `tts_import` | 按 `import.yaml` 导入（POST `/v1/import`） | `dryRun:false` 时写工作区 | `root`、`manifestPath`；可选 `dryRun` |
 | `tts_diff` | 本地 vs 游戏内差异（POST `/v1/diff`） | 只读 | `root` |
-| `tts_push` | 写回并重载（POST `/v1/push`） | **写入游戏**（危险） | `root`、`confirm`（必须字面量 `true`） |
+| `tts_push` | 写回并重载：完整 push 流水线（POST `/v1/push`） | **写入游戏**（危险） | `root`、`confirm`（必须字面量 `true`） |
 
 要点：
 
 - `tts_push` 是唯一有确认门的工具：调用侧 schema 就要求 `confirm: true`（字面量），hub 侧再挡一次（缺了返回 400 `HUB_CONFIRM_REQUIRED`）；写回语义注意——`scriptStates` 缺 `script` / `ui` 字段时 TTS 会**删除**对应内容。
-- ⚠️ `tts_pull` / `tts_diff` 受 §10.4 的已知实现限制影响（hub 运行期对应路由返回 500 `HUB_INTERNAL_ERROR`）；其余 8 个工具不受影响。
+- ✅ `tts_pull` / `tts_diff` 的 hub 运行期 500 问题已随阶段 5 会话注入修复（§10.4）；`tts_push` 现走 §11.2 的完整 push 流水线（备份 / 基线 / 素材检测 / 回读校验）。
 - 工具结果都是结构化 JSON（英文键名，不走 `t()`）；失败体统一 `{error:{code,message,details?}}`（`HUB_LUA_ERROR` 时 details 带 guid / line / col / endCol）。
 - MCP 会话期 stdout 只走协议；诊断 / 致命错误走 stderr JSON Lines（英文）。
 
@@ -651,6 +651,147 @@ Get-NetTCPConnection -LocalPort 39998 -State Listen | Select-Object OwningProces
 ```
 
 阶段 6 会提供**改版 VSCode 插件**：它不再抢 39998，而是连 hub 的 TCP 扇出 `127.0.0.1:39997`（纯字节转发），届时两者可同时使用。在改版插件就绪前，使用 hub（或独立模式的任何命令）都要先关闭官方插件。
+
+### 11. 安全写入路径：push / watch（阶段 5 新增）
+
+阶段 5（窗口 E）把「工作区 → 游戏」的写回链路补全：`tts pack push` 从只列清单的骨架变为**完整安全流水线**（默认 dry-run，`--yes` 才实写），新增 `tts watch` 文件监听自动 push 与 `tts pack diff -u` 逐行差异；`tts pack pull` 落盘后自动维护 `.tts/baseline.json` 安全基线。
+
+> 口径来自阶段 5 Run 1 实现（`src/cli/commands/pack.ts`、`src/cli/commands/watch.ts`、`src/pack/push.ts`、`src/safety/*.ts`）；baseline 字段级契约见 [`docs/schemas/baseline.json.md`](./docs/schemas/baseline.json.md)。本节命令输出为 `locales/zh-CN.json` 的实际文案（行内注明文案键；路径 / 时间戳为示意）。
+
+#### 11.1 新命令与旗标
+
+```console
+$ tts pack push [--root <dir>] [--dry-run | --yes] [--force-scripts-only] [--no-backup] [--no-baseline-check] [--backup-retention <n>]
+$ tts watch [root] [--dry-run | --yes] [--debounce <ms>] [--force-scripts-only] [--backup-retention <n>]
+$ tts pack diff [--root <dir>] [-u, --unified]
+```
+
+`tts pack push` 选项：
+
+| 选项 | 缺省 | 说明 |
+| --- | --- | --- |
+| `--root <dir>` | `.` | 图包工作区根目录 |
+| `--dry-run` | 开 | 试运行：走完整检测与过滤，只报告"将推送 / 跳过"多少；**不备份、不写游戏、不写基线** |
+| `--yes` | 关 | **唯一实写入口**（给了 `--yes` 则 dryRun=false）；不给就是试运行 |
+| `--force-scripts-only` | 关 | 素材有改动时仍强制只推脚本（自担风险；改动清单记入结果的 `assetChanges`） |
+| `--no-backup` | 开（默认备份） | 跳过 push 前自动备份（不推荐） |
+| `--no-baseline-check` | 开（默认检测） | 跳过基线冲突检测（冲突记入结果的 `baselineConflicts`） |
+| `--backup-retention <n>` | `20` | 备份保留份数（1..100） |
+
+`tts watch`：位置参数 `root`（缺省 `.`）、`--debounce <ms>`（缺省 300），其余旗标与 push 同名同义（`--yes` 打开自动实写）。
+
+`tts pack diff --unified`（或 `-u`）在 modified 条目后追加逐行 unified hunks（`@@ -本地起始,行数 @@` + `- 本地行` / `+ 游戏侧行`，含前后 3 行上下文）；added / deleted 与归一化后超过 5000 行的条目不附 hunks。
+
+#### 11.2 push 流水线（每步都做，顺序不可调换）
+
+```text
+tts pack push [--yes]
+ 1. 校验 pack.yaml（缺失 / 损坏立即失败，不占端口）
+ 2. 收集 scripts/*.lua + ui/*.xml 清单（空清单直接返回，不连 TTS）
+ 3. 拉游戏侧快照 getScripts（独立模式临时独占 39998 一次；hub 在线走 /v1/push）
+ 4. 素材改动检测 → 有 changed / added / deleted 且未 --force-scripts-only → 拒绝
+ 5. 基线冲突检测 → 游戏侧相对基线被改过且未 --no-baseline-check → 拒绝
+ 6. 过滤无变化对象（归一化后比较，CRLF / 结尾空行不算变化）→ 计入 skipped
+ 7. 强制补齐 script / ui：本地没有的一半用游戏侧现有内容原样带上
+    （TTS 协议：缺字段 = 删除对应内容），name 一律用游戏内真实显示名
+ 8. dryRun（默认）→ 到此返回：不备份、不发送、不写基线
+ 9. 备份：游戏内全部 scriptStates → .tts/backups/<时间戳>/（--no-backup 可关）
+10. 确认门：CLI 交互确认（--yes 直接放行；非 TTY 拒绝——写入路径宁可误拒）
+11. saveAndPlay 写回（只发有变化对象）
+12. 回读校验：再次 getScripts 与发送内容逐对象比对，不一致 → PUSH_VERIFY_FAILED，基线不更新
+13. 更新基线：writeBaseline(回读快照) + touchLastPushAt
+```
+
+- 步骤 4 / 5 在备份之前：被拦截的 push 不产生备份、不动游戏、不动基线。
+- 两条通路：hub 在线 → CLI 委托 `POST /v1/push`（hub 进程持有 39998，注入 server 复用、绝不二次绑定）；hub 离线 → 独立模式，`withEditorServer` 一次性包住「拉远端 → 备份 → 发送 → 回读」整段，用完即放。
+- MCP 的 `tts_push` 走 hub `/v1/push`（`confirm:true` 两层门）；响应体形 `{ok:true, dryRun, pushed, skipped, items(=pushed+skipped), backupDir?, baselineConflicts?, assetChanges?}`（字段级契约见 [`docs/schemas/hub-control.md`](./docs/schemas/hub-control.md) §4.11）。
+- 常见拦截错误码（stderr + exitCode 1）：`PUSH_ASSET_CHANGES_DETECTED`（素材改动）、`BASELINE_CONFLICT`（基线冲突）、`PUSH_ABORTED`（确认被拒）、`PUSH_VERIFY_FAILED`（回读不一致）；另有 `PACK_NOT_FOUND` / `PUSH_FAILED` / `BASELINE_*` / `BACKUP_*`。
+
+```console
+$ tts pack push --root ./packs/第七大陆
+推送试运行：将推送 1 个对象，跳过 25 个（未写回游戏）          # cli.pack.push.dryRunSummary
+
+$ tts pack push --root ./packs/第七大陆 --yes
+推送完成：已写回 1 个对象，跳过 25 个；备份目录：D:\packs\第七大陆\.tts\backups\2026-10-05T13-38-41.252Z
+                                                          # cli.pack.push.pushedSummary
+```
+
+#### 11.3 baseline.json：位置与作用
+
+- 位置：`<root>/.tts/baseline.json`（2 空格缩进 JSON + 末尾换行）；`tts pack init` 已把它写入图包 `.gitignore`，**工具内部状态、不入库**。
+- 内容：`entries[]` 记录各对象 script / ui 归一化后的 sha256（缺字段不记 hash）；`assetFiles` 记录文本素材清单的内容 hash；`updatedAt` / `lastPushAt` 两个时间戳。
+- 写入时机：`tts pack pull` 落盘后**自动全量重写**（保留旧 `lastPushAt`）；`push --yes` 成功且回读校验通过后用**回读快照**重写并盖 `lastPushAt`。dry-run / 被拦截 / 校验失败的 push 一律不写。
+- 作用：push 前回答两个安全问题——① 游戏内脚本 / UI 是否被别人改过（基线冲突 → 先 pull 对账，避免覆盖他人改动）；② 工作区素材是否漂移（素材改动 push 无法生效，必须先走离线回路）。
+- 损坏语义：文件不存在 / JSON 损坏 / 结构不符一律按"没有基线"处理（首跑重建），不会卡死写入链路；只有"文件在但读不出"（权限等）才报 `BASELINE_READ_FAILED`。
+
+```json
+{
+  "version": 1,
+  "packRoot": "D:\\packs\\第七大陆",
+  "updatedAt": "2026-10-05T13:38:41.252Z",
+  "lastPushAt": "2026-10-05T13:40:02.101Z",
+  "entries": [{ "guid": "-1", "name": "Global", "scriptHash": "336f365e…（64 位 hex）" }],
+  "assetFiles": { "decks/冒险牌堆/cards.csv": "aca7e28b…（64 位 hex）" }
+}
+```
+
+（完整字段、冲突判定规则与错误码见 [`docs/schemas/baseline.json.md`](./docs/schemas/baseline.json.md)。）
+
+#### 11.4 素材改动检测（「内容 hash 最严」）
+
+只覆盖三类文本清单（图片等二进制不进基线）：
+
+| 覆盖 | 路径（相对 root） |
+| --- | --- |
+| ✅ | `decks/<卡堆目录>/cards.csv` |
+| ✅ | `decks/<卡堆目录>/deck.yaml` |
+| ✅ | `objects/objects.csv` |
+
+- 口径：utf8 读出 → 归一化（CRLF / 单独 CR 折成 LF + 去掉结尾空白）→ sha256；因此换行风格 / 结尾空行差异**不算**改动（避免假拦截）。
+- 任一 `changed` / `added` / `deleted` 都拦截；没有基线时当前全部素材都算 `added`（首跑口径）。
+- 被拦截时的修复四步引导（在错误文案内）：`tts assets upload` → `tts pack build` → 游戏内加载新存档 → 再 `tts pack push`；确要只推脚本用 `--force-scripts-only`（改动清单记入结果，仍不会推素材）。
+
+```console
+$ tts pack push --root ./packs/第七大陆 --yes
+⚠️  检测到素材改动（decks/ 或 objects/）共 1 处；push 协议不接收素材字段，此类改动无法通过热重载生效：
+  - decks/冒险牌堆/cards.csv
+（退出码 1；随后是 assets upload → pack build → 加载存档 → 再 push 的四步引导）  # error.push.assetChangesDetected
+```
+
+- 原因（约束 7）：push 协议（出站 messageID 1 / Save & Play）只接收 `scriptStates`，**不接收任何素材字段**，素材改动永远无法靠 push 生效。
+
+#### 11.5 watch 模式：改完即推
+
+```console
+$ tts watch ./packs/第七大陆            # 默认 dry-run：只报告将推送什么
+$ tts watch ./packs/第七大陆 --yes      # 静默期结束自动实写（--yes 即确认门）
+```
+
+- 只监听 `<root>/scripts`（`.lua`）与 `<root>/ui`（`.xml`）的 add / change / unlink；`decks/` / `objects/` 不在监听列表（素材改动本就该被 push 拦截）。
+- 手写防抖：缺省静默 300 ms（`--debounce` 可调）；push 进行中再来的事件合批为"本轮结束后补一轮"，保证最后一轮改动不丢。
+- 每一轮都是完整的 §11.2 流水线（hub 在线委托 `/v1/push`，离线独立模式）；轮内失败（如素材改动 / TTS 正在加载存档）打印 `cli.watch.pushFailed` 后**继续监听**，不退出。
+- `--yes` 是启动时给出的唯一确认门；不带给 dry-run，不写游戏、不产生备份。
+- Ctrl+C 打印退出提示并关闭 watcher。
+
+```console
+$ tts watch ./packs/第七大陆 --yes
+watch 已启动：监听 D:\packs\第七大陆（dry-run：false）      # cli.watch.started
+正在监听脚本/UI 变化（Ctrl+C 停止）                        # cli.watch.watching
+检测到改动，开始推送…                                      # cli.watch.pushing
+推送完成：已写回 1 个对象，跳过 25 个；备份目录：…          # cli.watch.pushOk
+watch 已停止                                               # cli.watch.stopped（Ctrl+C）
+```
+
+#### 11.6 与 `pack build` 的分工（约束 7 / 约束 8）
+
+| 改动类型 | 生效通路 |
+| --- | --- |
+| 脚本 / UI（`scripts/*.lua` / `ui/*.xml`） | `tts pack push --yes`（Save & Play 热重载；先备份 + 素材 / 基线检测） |
+| 素材（图片、`cards.csv` / `deck.yaml` / `objects.csv`） | `tts pack build` 出新存档 → 游戏内加载（push 会拦截素材改动） |
+| 对象 / 牌堆数据（`objects\|decks/*/data.json`） | 同素材：`tts pack build`（push 只写 `scriptStates`） |
+
+- 约束 8（离线回路）：`tts pack unpack` 把完整原始存档落成 `.tts/skeleton.json`，`tts pack build` 按 GUID **定点替换**工作区改动，未改动部分与骨架逐字节一致——绝不"重新生成"存档。
+- 约束 7（push 能力边界）：push 只发脚本 / UI；素材改动必须走 build。两条通路互不替代，`tts pack diff -u` 用于写回前看清脚本 / UI 的逐行差异。
 
 ### 全局选项
 
@@ -723,9 +864,9 @@ TTS 数据目录（Mods）的位置由**玩家游戏内设置**决定，安装�
 
 - **VSCode 插件改版未提供**：hub（阶段 4）已落地并独占 39998，官方 VSCode 插件在
   hub 运行期间不可用；连 hub TCP 扇出（39997）的改版插件属于阶段 6（见 §10.6）。
-- **CLI 的 `pack push` 仍是骨架**：push 协议（messageID 1）不接收素材字段，阶段 5 才由
-  CLI 实际写入；真正写回游戏的唯一通路是 hub 控制通道 `POST /v1/push` / MCP `tts_push`
-  （必须 `confirm:true`，见 §10.4 / §10.5）。
+- **push 协议不接收素材字段（约束 7）**：`tts pack push` 只写脚本 / UI，素材改动会被
+  检测并拒绝（除非显式 `--force-scripts-only`，自担风险）；素材必须走
+  `tts pack build` → 游戏内加载新存档，见 §11.6。
 - **注册表探测未实现**：无法读取游戏内设置的真实 Mods 路径，只能靠上述候选与用户指定。
 - **macOS / Linux 探测未实现**：仅保留 hook。
 - **`tts --help` 的文案不跟随 `--lang`**：命令描述在模块加载时求值，早于 `--lang` 生效。
@@ -751,20 +892,21 @@ src/
   assets/     snake_case ↔ CamelCase 字段映射、素材盘点、URL 存活检测、下载修复与迁移（阶段 3）
   datadir/    TTS 数据目录探测与配置读写
   i18n/       极简 t(key, params) 双语实现
-  pack/       图包工作区：layout / packyaml / manifest / init / unpack / pull / push / diff / build / import（阶段 2A / 3）
+  pack/       图包工作区：layout / packyaml / manifest / init / unpack / pull / push / diff / build / import（阶段 2A / 3 / 5）
+  safety/     写入路径安全链：push 前备份 / 基线 hash 与冲突检测 / 交互确认门（阶段 5）
   deck/       卡牌图集切片 / 拼接 / 校验、cards.csv 与 objects.csv（阶段 2B）
   vcs/        git 语义化 status / commit / verify / lfs / size（阶段 2C）
   archive/    .ttsmod 读写、TTS 缓存键、扩展名三级推导（阶段 3）
   host/       图床统一接口与四种内置实现：steamcloud / s3 / local / command（阶段 3）
   review/     与图包审批工具的联动：prepare 配置 / status 调用 / gate 门禁（阶段 3）
-  hub/        hub 守护进程：编辑器入站 + TCP/WS 扇出 + S2 控制通道（阶段 4）
+  hub/        hub 守护进程：编辑器入站 + TCP/WS 扇出 + S2 控制通道（阶段 4 / 5）
   mcp/        MCP stdio 服务与 10 个工具（阶段 4）
-  cli/        commander 命令注册（status / config / pull / exec / assets / pack / deck / vcs / import / host / fetch / migrate / review / hub）
+  cli/        commander 命令注册（status / config / pull / exec / assets / pack / deck / vcs / import / host / fetch / migrate / review / hub / watch）
 docs/schemas/ 契约文档：pack.yaml / deck.yaml / assets.yaml / cards.csv / objects.csv / registry.yaml
-              + 阶段 3 的 import.yaml / host / ttsmod + 阶段 4 的 hub-control（共十份）
+              + 阶段 3 的 import.yaml / host / ttsmod + 阶段 4 的 hub-control + 阶段 5 的 baseline.json（共十一份）
 locales/      zh-CN.json、en-US.json
 tests/unit/   不依赖 TTS 的单元测试
-tests/integration/  验收骨架（phase1 需 TTS；phase2b / 2c / 3 / 4 为逐用例 it.skip 清单）
+tests/integration/  验收骨架（phase1 需 TTS；phase2b / 2c / 3 / 4 / 5 为逐用例 it.skip 清单）
 ```
 
 约定：TypeScript ESM（`.ts`，import/export）、target ES2022 / module NodeNext / strict；
@@ -777,12 +919,15 @@ tests/integration/  验收骨架（phase1 需 TTS；phase2b / 2c / 3 / 4 为逐�
 `npm test` 与 `npm run test:integration` 都会跳过它（输出 10 skipped）。
 
 `tests/integration/phase2b.acceptance.test.ts` / `phase2c.acceptance.test.ts` /
-`phase3.acceptance.test.ts` / `phase4.acceptance.test.ts` 是后续阶段的验收骨架：
+`phase3.acceptance.test.ts` / `phase4.acceptance.test.ts` /
+`phase5.acceptance.test.ts` 是后续阶段的验收骨架：
 **逐用例 `it.skip`**（不是 describe.skip），
 每个用例体只有 TODO 与一条 `todo(...)` 守卫（未实现就打开会明确失败，不给假绿）。开启方式：
 按用例内 TODO 装配夹具后删掉该用例的 `.skip`，再跑 `npx vitest run tests/integration/<文件>`
 （或 `npm run test:integration`）。phase3 的 12 个场景覆盖 import / host / migrate / pack export /
-pack import / 扩展名推导 / review 门禁 / sync-upstream，多数场景全离线。
+pack import / 扩展名推导 / review 门禁 / sync-upstream，多数场景全离线；
+phase5 的 10 个场景覆盖离线 build→unpack 回路 / pull 写 baseline / push dry-run 与
+--yes 实写 / 原样回写零副作用 / marker 生效 / 素材改动拦截与强制绕过 / 基线冲突 / watch 自动 push。
 
 手动开启 phase1 的步骤：
 

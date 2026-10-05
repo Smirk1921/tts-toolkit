@@ -33,6 +33,7 @@ import { pullCommand } from "./commands/pull.js";
 import { reviewCommand } from "./commands/review.js";
 import { statusCommand } from "./commands/status.js";
 import { vcsCommand } from "./commands/vcs.js";
+import { watchCommand } from "./commands/watch.js";
 
 /** 支持的输出语言（与 src/i18n/index.ts 保持一致）。 */
 const SUPPORTED_LANGS: readonly Lang[] = ["zh-CN", "en-US"];
@@ -184,6 +185,8 @@ program.addCommand(fetchCommand);
 program.addCommand(migrateCommand);
 program.addCommand(reviewCommand);
 program.addCommand(hubCommand);
+// 阶段 5 新增：watch 长驻命令（阶段 5 收尾补注册；实现见 commands/watch.ts）
+program.addCommand(watchCommand);
 localizeCommandTree(program);
 
 /**

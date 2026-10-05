@@ -354,6 +354,9 @@
             "dataDir": "审批数据目录覆盖（缺省取配置里的 data_dir）"
           }
         }
+      },
+      "hub": {
+        "description": "启动 hub 常驻进程：独占编辑器端口，提供 TCP/WS 扇出与仅本机控制通道（供 CLI 委托与 MCP 接入）"
       }
     },
     "error": {
@@ -365,8 +368,10 @@
     },
     "status": {
       "connected": "已连接到 TTS 编辑器（端口 {port}）",
+      "connectedViaHub": "已通过 hub 连接到 TTS 编辑器（控制通道 127.0.0.1:{port}）",
       "portInUse": "端口 {port} 已被占用：请关闭占用该端口的程序（通常是另一个 tts-toolkit 实例）后重试",
       "notRunning": "未检测到正在运行的 TTS 编辑器：请先启动游戏并进入「编辑器」界面",
+      "hubOnlineTtsOffline": "hub 在线，但 TTS 编辑器未连接：请启动游戏并进入「编辑器」界面",
       "version": "脚本引擎版本：{version}",
       "objects": "当前存档对象数：{count}"
     },
@@ -523,14 +528,16 @@
       "done": "拉取完成：脚本 {scripts} 个，UI 界面 {ui} 个",
       "empty": "没有需要拉取的改动",
       "target": "输出目录：{dir}",
-      "notConnected": "无法拉取脚本：尚未连接到 TTS 编辑器"
+      "notConnected": "无法拉取脚本：尚未连接到 TTS 编辑器",
+      "viaHub": "hub 在线：本次拉取委托 hub 执行"
     },
     "exec": {
       "timeout": "Lua 执行超时（{seconds} 秒）：脚本可能陷入死循环，或被游戏内弹窗阻塞",
       "luaError": "Lua 执行出错：{message}",
       "multipleReturns": "Lua 返回了 {count} 个值，只取第一个（其余已忽略）",
       "notConnected": "无法执行 Lua：尚未连接到 TTS 编辑器",
-      "luaErrorObject": "出错对象 guid：{guid}"
+      "luaErrorObject": "出错对象 guid：{guid}",
+      "viaHub": "hub 在线：本次执行委托 hub 完成"
     },
     "assets": {
       "summary": "素材检查完成：有效 {alive} 个，失效 {dead} 个",
@@ -670,6 +677,17 @@
           "fileMissing": "成品文件缺失"
         }
       }
+    },
+    "hub": {
+      "option": {
+        "port": "控制通道端口（缺省 39995，仅绑定 127.0.0.1）",
+        "editorPort": "TTS 编辑器端口（缺省 39998，由 TTS 主动连入）",
+        "tcpPort": "TCP 扇出端口（缺省 39997）",
+        "wsPort": "WebSocket 扇出端口（缺省 39996）",
+        "logFile": "日志文件路径（追加写入；缺省日志只写 stdout）"
+      },
+      "started": "hub 已启动：控制通道 http://127.0.0.1:{controlPort}/v1；编辑器端口 {editorPort}；TCP 扇出 {tcpPort}；WS 扇出 {wsPort}（Ctrl+C 停止）",
+      "stopped": "hub 已停止"
     }
   },
   "error": {
@@ -978,6 +996,9 @@
       "corrupt": "ZIP 结构损坏或条目无法解压：{detail}",
       "exportWriteFailed": ".ttsmod 写入失败：{path}（{detail}）",
       "strictMissing": "素材不全（strict 模式）：{count} 条素材缺失或扩展名推导失败，已中止打包、未产出 .ttsmod：\n{list}"
+    },
+    "hub": {
+      "delegateFailed": "hub 委托失败：{message}（hub 在线时不回退独立模式；请检查 tts hub 是否仍在运行）"
     }
   },
   "host": {
@@ -1114,6 +1135,50 @@
       "unregisteredType": "素材类型 {type} 未在类型表中注册，按开放类型导入：{name}",
       "skippedFiles": "卡堆 {deck} 跳过非图片文件或子目录（未导入）：{files}",
       "unmappedObjectFile": "素材 {name} 的字段 {field} 未能映射到 objects.csv 列，文件仍复制但不记入台账"
+    }
+  },
+  "mcp": {
+    "tool": {
+      "tts_status": {
+        "title": "TTS 状态查询",
+        "description": "查询 hub 与 TTS 编辑器状态：返回 hub 进程信息、TTS 连接状态、脚本引擎版本与当前存档对象数。只读，无副作用。"
+      },
+      "tts_pull": {
+        "title": "拉取脚本到工作区",
+        "description": "把游戏内全部脚本与 UI 拉取到 root 指定的图包工作区（写出 .lua / .xml 文件并创建目录）。只写本地文件，不修改游戏内内容。"
+      },
+      "tts_exec": {
+        "title": "执行 Lua（有副作用）",
+        "description": "在 TTS 进程内执行一段 Lua 并取回 JSON 结果；默认在全局脚本（guid -1）上执行。有副作用：脚本可读写游戏状态，请只执行可信代码。"
+      },
+      "tts_assets": {
+        "title": "素材存活检测",
+        "description": "检查一批素材 URL 是否可访问（HTTP 探测）：返回总数、有效 / 失效数量与失效明细。只读网络请求，不写文件。"
+      },
+      "tts_pack_list": {
+        "title": "图包注册表列表",
+        "description": "列出 .registry.yaml 中注册的图包；注册表不存在时返回空表而非报错。只读。"
+      },
+      "tts_deck_slice": {
+        "title": "牌堆图集切片",
+        "description": "按网格把牌堆图集切成单卡图并写入 outDir。写本地文件；同一图集匹配到多个卡堆时须用 deckKey / deckGuid 消歧，否则调用失败。"
+      },
+      "tts_deck_plan": {
+        "title": "替换计划 dry-run",
+        "description": "对存档 JSON dry-run 替换规则，列出受影响的 URL 与统计。只读，不写任何文件。"
+      },
+      "tts_import": {
+        "title": "导入素材到工作区",
+        "description": "按 import.yaml 清单把素材导入图包工作区（写本地文件）。dryRun=true 时只校验清单并计算导入计划，不落盘。"
+      },
+      "tts_diff": {
+        "title": "本地 / 游戏内差异对比",
+        "description": "对比本地工作区与游戏内脚本 / UI 的差异。只读，不写文件、不推送。"
+      },
+      "tts_push": {
+        "title": "写回游戏并重载（危险）",
+        "description": "危险操作：把工作区脚本 / UI 写回游戏并触发重载（SaveAndPlay）；scriptStates 缺 script / ui 字段的内容会被 TTS 删除。必须显式传 confirm=true，否则调用被拒。"
+      }
     }
   }
 }

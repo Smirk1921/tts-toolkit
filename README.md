@@ -2,7 +2,7 @@
 
 面向《桌游模拟器》（Tabletop Simulator）图包作者的命令行工具：通过 TTS 的**外部编辑器协议**直连运行中的游戏，只读地检查连接状态、执行 Lua、拉取全部脚本与 UI、盘点素材 URL；并支持**离线**的图包工作区管理（unpack / build / pull / push / diff），所有面向用户的输出支持中文 / 英文双语。
 
-> 当前进度：阶段 1（基础设施 + 协议层 + 只读 CLI）+ 阶段 2A（图包工作区）+ 2B（卡牌图集）+ 2C（多图包与版本控制）+ 阶段 3（素材导入 / 图床 / 打包分发，窗口 C）。`status / exec / pull / assets / config` 等命令只读；`pack init/unpack/build/export/import/sync-upstream`、`import / host / fetch / migrate / deck / vcs / review` 离线或按需联网；`pack pull/diff` 与运行中 TTS 交互；`pack push` 为骨架（阶段 5 才实际写入）。
+> 当前进度：阶段 1（基础设施 + 协议层 + 只读 CLI）+ 阶段 2A（图包工作区）+ 2B（卡牌图集）+ 2C（多图包与版本控制）+ 阶段 3（素材导入 / 图床 / 打包分发，窗口 C）+ 阶段 4（hub + MCP，窗口 D）。`status / exec / pull / assets / config` 等命令只读；`pack init/unpack/build/export/import/sync-upstream`、`import / host / fetch / migrate / deck / vcs / review` 离线或按需联网；`pack pull/diff` 与运行中 TTS 交互；`pack push` 为骨架（阶段 5 才实际写入）；`tts hub` 启动常驻守护进程，`tts-mcp` 为 MCP stdio 服务（见 §10）。
 
 ## 环境要求
 
@@ -436,6 +436,222 @@ $ tts review gate --pack ./packs/第七大陆
 
 （全部 pass 时输出 `门禁通过：全部素材已审批通过，可以打包 / 上传` 并退出码 0。）
 
+### 10. hub 守护进程与 MCP 接入（阶段 4 新增）
+
+阶段 4（窗口 D）新增常驻 **hub 进程**与 **MCP 服务**：hub 独占编辑器端口 39998，把 TTS 推送扇出给下游，并在 `127.0.0.1:39995` 暴露 HTTP+JSON 控制通道；`status / pull / exec` 在 hub 在线时自动委托，`tts-mcp` 通过同一控制通道把 10 个工具接入 MCP 客户端。
+
+> 本节中 hub 的 JSON Lines 日志、端口监听与 curl 响应为 2026-10-05 在本机实测（TTS 未运行，只验证了协议与错误契约）；CLI 中文提示来自 `locales` 的 `cli.hub.*` / `cli.status.connectedViaHub` / `cli.pull.viaHub` / `cli.exec.viaHub` / `error.hub.delegateFailed` 键，按 `t()` 模板语义展示。
+
+#### 10.1 启动 hub：`tts hub`（或 `tts-hub`）
+
+```console
+$ tts hub
+{"ts":"2026-10-05T05:21:52.023Z","level":"info","msg":"hub started","editorPort":39998,"tcpPort":39997,"wsPort":39996}
+control server listening on 127.0.0.1:39995
+{"ts":"2026-10-05T05:21:52.024Z","level":"info","msg":"hub started","port":39995}
+hub 已启动：控制通道 http://127.0.0.1:39995/v1；编辑器端口 39998；TCP 扇出 39997；WS 扇出 39996（Ctrl+C 停止）
+```
+
+Ctrl+C（或 `POST /v1/hub/shutdown`）优雅停止，退出码 0：
+
+```console
+^C
+{"ts":"2026-10-05T05:22:07.494Z","level":"info","msg":"hub stopping"}
+control server stopped
+{"ts":"2026-10-05T05:22:07.495Z","level":"info","msg":"hub stopped"}
+{"ts":"2026-10-05T05:22:07.495Z","level":"info","msg":"hub stopped"}
+hub 已停止
+```
+
+| 选项 | 缺省 | 说明 |
+| --- | --- | --- |
+| `--port <n>` | 39995 | 控制通道端口 |
+| `--editor-port <n>` | 39998 | 编辑器入站端口（TTS 主动连入；hub 期间独占） |
+| `--tcp-port <n>` | 39997 | TCP 扇出端口 |
+| `--ws-port <n>` | 39996 | WebSocket 扇出端口 |
+| `--log-file <path>` | 仅 stdout | 追加写日志文件；文件不可用时降级为仅 stdout 并记一条 warn |
+
+端口分工：
+
+| 端口 | 归属 | 方向与形态 |
+| --- | --- | --- |
+| 39998 | 编辑器入站 | TTS → hub，独占绑定（与官方 VSCode 插件互斥，见 10.6） |
+| 39997 | TCP 扇出 | hub → 下游，连入后持续收 JSON 串（无分隔符） |
+| 39996 | WS 扇出 | hub → 下游，连入后持续收 JSON 文本帧 |
+| 39995 | 控制通道 | 双向 HTTP+JSON，**只绑 127.0.0.1** |
+
+要点：
+
+- 日志是英文 JSON Lines（`ts` / `level` / `msg` + 附加字段）写 stdout；控制通道自身的启停两行为纯英文文本行（`control server listening on ...` / `control server stopped`），不是 JSON。
+- 启动失败（任一端口被占）输出中文原因并退出 1；39998 被占的提示含 PID（文案与「与官方 VSCode 插件的互斥」一节相同），已启动的资源会被回滚。
+- 停止顺序固定：控制通道（先拒新连接）→ 编辑器 + 扇出 → 日志文件流；SIGINT / SIGTERM / `/v1/hub/shutdown` 三路共用同一次停止流程（幂等）。
+- `tts-hub` bin 是 `tts hub` 的无选项薄入口（端口全取缺省值），适合写进脚本或服务自启。
+
+#### 10.2 独立模式 vs hub 模式自动切换
+
+`tts status` / `tts pull` / `tts exec` 每条命令执行前都会现场探测一次 hub（`GET /v1/status`，800 ms 超时，**不缓存**）：
+
+- **hub 在线**：委托执行——`pull` / `exec` 首行打印一行「经 hub」提示（分别为 `cli.pull.viaHub` / `cli.exec.viaHub` 的文案），`status` 报告经 hub 的连接（含控制通道地址）；实际动作在 hub 进程内完成（它持有 39998 的独占绑定）。注意 `pull` 目前受 §10.4 的已知实现限制影响（hub 运行期该路由返回 500，委托失败退出 1）。
+- **hub 不在线**：独立模式，与阶段 3 完全一致（临时独占绑定 39998 后直连 TTS）。
+- **委托失败**（hub 中途退出、协议错误等）：输出 `error.hub.delegateFailed` 并退出 1，**不回退独立模式**——hub 在线期间 39998 由 hub 持有，回退也绑不上端口。
+- 其余命令（`assets / config / pack / deck / vcs / import / host / fetch / migrate / review`）不经过 hub，行为不变。
+
+```console
+$ tts status
+已通过 hub 连接到 TTS 编辑器（控制通道 127.0.0.1:39995）
+脚本引擎版本：MoonSharp 3.0.0.0
+当前存档对象数：251
+
+$ tts exec 'return 1+1'
+hub 在线：本次执行委托 hub 完成
+2
+```
+
+（hub 在线但 TTS 还没连上 39998 时，`status` 给出提示并以退出码 1 结束。）
+
+#### 10.3 下游通道：TCP / WS / SSE
+
+hub 收到 TTS 推送后，同一份 JSON 同时写入三路（单路断开自动摘除，不影响其他路）：
+
+| 通道 | 地址 | 数据形态 | 面向 |
+| --- | --- | --- | --- |
+| TCP 扇出 | `127.0.0.1:39997` | JSON 串原样连写，**无换行分隔** | 阶段 6 改版 VSCode 插件（纯字节转发） |
+| WS 广播 | `ws://127.0.0.1:39996/` | 一条消息 = 一帧文本（JSON） | 自研客户端 / 网页面板 |
+| SSE | `http://127.0.0.1:39995/v1/events` | `data: <JSON>` 行事件流 | curl / 浏览器 EventSource 调试 |
+
+```console
+$ curl -N http://127.0.0.1:39995/v1/events
+:connected
+
+data: {"messageID":2,"message":"hello from Lua"}
+```
+
+- TCP 不写分隔符（S2 约定）：接收方按 JSON 流自行增量解析；只服务本机（hub 绑 127.0.0.1）。
+- WS 是手写极简 RFC6455：只接受 `GET /` + `Upgrade: websocket`，普通 HTTP 请求回 426；下行文本帧；上行只处理 Ping（回 Pong）与 Close，数据帧忽略——**下游只收**。
+- SSE 连接先收到一行 `:connected` 注释；只转发 6 类消息：`GameLoaded / Print / Error / CustomMessage / GameSaved / ObjectCreated`（不含 `PushNewObject` 与 exec 往返的 `ReturnValue`）；客户端断开即退订。
+- 三路都只绑回环地址（实测 39995 / 39996 / 39997 均为 `127.0.0.1`）。
+
+#### 10.4 控制通道（HTTP+JSON on 39995）
+
+基线 `http://127.0.0.1:39995/v1`，12 条请求 / 响应路由 + 1 条 SSE（`GET /v1/events`）：
+
+| 方法 | 路由 | 作用 |
+| --- | --- | --- |
+| GET | `/v1/status` | hub 健康 + TTS 连接状态 |
+| POST | `/v1/scripts/pull` | 拉全部脚本到工作区 |
+| POST | `/v1/scripts/save-and-play` | 回写 scriptStates（供 push 用） |
+| POST | `/v1/exec` | 执行 Lua 返回 JSON |
+| POST | `/v1/assets/check` | 素材盘点 / 存活检测 |
+| GET | `/v1/packs` | 列出注册表图包 |
+| POST | `/v1/deck/slice` | 切片 |
+| POST | `/v1/deck/plan` | 替换计划 dry-run |
+| POST | `/v1/import` | 按 import.yaml 导入 |
+| POST | `/v1/diff` | 本地 vs 游戏内差异 |
+| POST | `/v1/push` | 写回并重载（必须 `confirm:true`） |
+| POST | `/v1/hub/shutdown` | 优雅关闭 hub |
+| GET | `/v1/events` | SSE 事件流 |
+
+统一约定：
+
+- 只监听回环地址；构造时就拒绝 `0.0.0.0` / `::` 等通配地址（绝不监听所有接口）。
+- POST 请求体上限 **1 MB**（超限 413）；`Content-Type` 必须是 `application/json`（否则 415）。
+- 错误统一 `{error:{code,message,details?}}` + 4xx/5xx：
+
+| code | HTTP | 触发 |
+| --- | --- | --- |
+| `HUB_BAD_REQUEST` | 400 | 缺字段 / 非法 JSON / 请求体不是对象 |
+| `HUB_NOT_FOUND` | 404 | 未知路由 |
+| `HUB_METHOD_NOT_ALLOWED` | 405 | 路径存在但方法不对（带 `Allow` 头） |
+| `HUB_PAYLOAD_TOO_LARGE` | 413 | 请求体超过 1 MB |
+| `HUB_UNSUPPORTED_MEDIA_TYPE` | 415 | `Content-Type` 不是 `application/json` |
+| `HUB_CONFIRM_REQUIRED` | 400 | `/v1/push` 未带 `confirm:true` |
+| `HUB_PACK_ERROR` | 400 | 图包业务错误（`details.packCode` 透传业务码） |
+| `HUB_LUA_ERROR` | 400 | Lua 运行时错误（`details` 带 guid / line / col / endCol） |
+| `HUB_INTERNAL_ERROR` | 500 | 其余异常（含 TTS 未连接） |
+| `HUB_NOT_RUNNING` | —（客户端合成） | hub 不可达：CLI / MCP 客户端侧网络层失败，不是 hub 返回的 |
+
+```console
+$ curl http://127.0.0.1:39995/v1/status
+{"ok":true,"hub":{"editor":true,"tcpClients":0,"wsClients":0,"inprocClients":0,"startedAt":1791177712023,"uptimeMs":5020},"tts":{"connected":false}}
+
+$ curl -X POST http://127.0.0.1:39995/v1/exec -H "Content-Type: application/json" -d '{"lua":"return 1+1"}'
+{"error":{"code":"HUB_INTERNAL_ERROR","message":"无法连接 TTS（127.0.0.1:39999）。请确认游戏已启动并加载了存档。"}}
+
+$ curl -X POST http://127.0.0.1:39995/v1/push -H "Content-Type: application/json" -d '{"root":"D:/packs/演示包"}'
+{"error":{"code":"HUB_CONFIRM_REQUIRED","message":"this operation requires confirm:true in the request body"}}
+
+$ curl -X POST http://127.0.0.1:39995/v1/hub/shutdown
+{"ok":true}
+```
+
+要点：
+
+- 控制通道**有意不暴露** `pack export` / `pack import`（`.ttsmod`）/ `pack sync-upstream` / `review`（打包、上游合并与审批门禁不进 HTTP 面）。
+- `/v1/deck/slice` 与 `/v1/deck/plan` 的请求体就是 CLI 同名选项（`sheetPath` / `savePath` / `outDir` 等绝对路径）；HTTP 场景无交互，多候选时 slice 报 `SLICE_AMBIGUOUS`（`HUB_PACK_ERROR`），用 `deckKey` / `deckGuid` 消歧后重试。
+- `/v1/push` 是本阶段**唯一实际写回游戏**的通路（`confirm:true` 必填）；CLI 的 `pack push` 仍是清单骨架（阶段 5 补 baseline hash / 备份 / 素材检测）。
+- ⚠️ **已知实现限制（阶段 4，待修）**：`POST /v1/scripts/pull` 与 `POST /v1/diff` 在 hub 运行期会返回 500 `HUB_INTERNAL_ERROR`（`PortInUseError`）——`pullFromGame` / `diffWorkspace` 内部仍经 `withEditorServer` 重新独占绑定 39998，与 hub 冲突；修复方向（会话注入）与影响范围见 [`docs/schemas/hub-control.md`](./docs/schemas/hub-control.md) §4.2 / §4.10。
+- 完整契约（字段级）见 [`docs/schemas/hub-control.md`](./docs/schemas/hub-control.md)（第 10 份契约文档）。
+
+#### 10.5 MCP 服务（`tts-mcp`）
+
+`tts-mcp` 是独立的 **stdio MCP 进程**（不经过 `tts` 主 CLI，自身不监听任何端口）：每个工具调用 = 控制通道上的一次 HTTP 请求，需要先启动 hub。hub 未运行时工具返回 `isError:true` + `{error:{code:"HUB_NOT_RUNNING",...}}`，不会倒退为本地模式。
+
+```console
+$ tts hub        # 先起 hub
+$ tts-mcp        # MCP 客户端按需拉起（stdout 是协议通道，诊断走 stderr）
+```
+
+`--lang zh-CN | en-US` 指定工具标题 / 描述语言（非法值向 stderr 告警后按默认链回退，不阻塞会话）。
+
+10 个工具：
+
+| 工具 | 作用（对应路由） | 副作用 | 参数 |
+| --- | --- | --- | --- |
+| `tts_status` | hub + TTS 状态（GET `/v1/status`） | 只读 | 无 |
+| `tts_pull` | 拉全部脚本到工作区（POST `/v1/scripts/pull`） | 写工作区 `scripts/`、`ui/` | `root` |
+| `tts_exec` | 执行 Lua（POST `/v1/exec`） | 由 Lua 代码决定（游戏内） | `lua`；可选 `guid`、`timeoutMs` |
+| `tts_assets` | URL 存活检测（POST `/v1/assets/check`） | 只读（联网探测） | `urls`（非空字符串数组）；可选 `timeoutMs` |
+| `tts_pack_list` | 列出注册表图包（GET `/v1/packs`） | 只读 | 可选 `packsRoot` |
+| `tts_deck_slice` | 图集切片（POST `/v1/deck/slice`） | 写切片图到 `outDir` | `sheetPath`、`savePath`、`outDir`；可选 `deckKey`、`deckGuid` |
+| `tts_deck_plan` | 替换计划 dry-run（POST `/v1/deck/plan`） | 只读 | `savePath`（路径或已解析对象）、`rules`（数组） |
+| `tts_import` | 按 `import.yaml` 导入（POST `/v1/import`） | `dryRun:false` 时写工作区 | `root`、`manifestPath`；可选 `dryRun` |
+| `tts_diff` | 本地 vs 游戏内差异（POST `/v1/diff`） | 只读 | `root` |
+| `tts_push` | 写回并重载（POST `/v1/push`） | **写入游戏**（危险） | `root`、`confirm`（必须字面量 `true`） |
+
+要点：
+
+- `tts_push` 是唯一有确认门的工具：调用侧 schema 就要求 `confirm: true`（字面量），hub 侧再挡一次（缺了返回 400 `HUB_CONFIRM_REQUIRED`）；写回语义注意——`scriptStates` 缺 `script` / `ui` 字段时 TTS 会**删除**对应内容。
+- ⚠️ `tts_pull` / `tts_diff` 受 §10.4 的已知实现限制影响（hub 运行期对应路由返回 500 `HUB_INTERNAL_ERROR`）；其余 8 个工具不受影响。
+- 工具结果都是结构化 JSON（英文键名，不走 `t()`）；失败体统一 `{error:{code,message,details?}}`（`HUB_LUA_ERROR` 时 details 带 guid / line / col / endCol）。
+- MCP 会话期 stdout 只走协议；诊断 / 致命错误走 stderr JSON Lines（英文）。
+
+**ZCode 注册示例**：编辑 `C:\Users\<用户>\.zcode\cli\config.json`（**先备份原文件**），把下面这段并入文件顶层（`plugins` / `skills` 等原字段保持不动）：
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "tts": {
+        "command": "node",
+        "args": ["D:\\Codex\\TTS图包制作维护工具\\tts-toolkit\\dist\\mcp\\main.js"]
+      }
+    }
+  }
+}
+```
+
+（需要先 `npm run build`；可选在 `args` 里追加 `"--lang", "zh-CN"`。改完重启 ZCode 会话即可看到 10 个 `tts_*` 工具。）
+
+#### 10.6 与官方 VSCode 插件的互斥
+
+hub 独占 39998 期间，官方 VSCode 插件（以及未走 hub 的其他工具实例）**都连不上游戏**；反过来官方插件先占用 39998 时，`tts hub` 会启动失败并输出含 PID 的中文提示。排查命令与阶段 1 相同：
+
+```powershell
+Get-NetTCPConnection -LocalPort 39998 -State Listen | Select-Object OwningProcess
+```
+
+阶段 6 会提供**改版 VSCode 插件**：它不再抢 39998，而是连 hub 的 TCP 扇出 `127.0.0.1:39997`（纯字节转发），届时两者可同时使用。在改版插件就绪前，使用 hub（或独立模式的任何命令）都要先关闭官方插件。
+
 ### 全局选项
 
 | 选项 | 说明 |
@@ -505,10 +721,11 @@ TTS 数据目录（Mods）的位置由**玩家游戏内设置**决定，安装�
 
 ## 已知限制
 
-- **不做 hub / MCP / VSCode 插件**：属于阶段 4；hub 的 TCP / WebSocket 端口常量
-  （39997 / 39996）已在代码中预留，但未启用。
-- **不暴露 push**：push 协议（messageID 1）不接收素材字段，本阶段 CLI 只读，
-  不会向游戏写入任何内容（设计约束 7）。
+- **VSCode 插件改版未提供**：hub（阶段 4）已落地并独占 39998，官方 VSCode 插件在
+  hub 运行期间不可用；连 hub TCP 扇出（39997）的改版插件属于阶段 6（见 §10.6）。
+- **CLI 的 `pack push` 仍是骨架**：push 协议（messageID 1）不接收素材字段，阶段 5 才由
+  CLI 实际写入；真正写回游戏的唯一通路是 hub 控制通道 `POST /v1/push` / MCP `tts_push`
+  （必须 `confirm:true`，见 §10.4 / §10.5）。
 - **注册表探测未实现**：无法读取游戏内设置的真实 Mods 路径，只能靠上述候选与用户指定。
 - **macOS / Linux 探测未实现**：仅保留 hook。
 - **`tts --help` 的文案不跟随 `--lang`**：命令描述在模块加载时求值，早于 `--lang` 生效。
@@ -540,12 +757,14 @@ src/
   archive/    .ttsmod 读写、TTS 缓存键、扩展名三级推导（阶段 3）
   host/       图床统一接口与四种内置实现：steamcloud / s3 / local / command（阶段 3）
   review/     与图包审批工具的联动：prepare 配置 / status 调用 / gate 门禁（阶段 3）
-  cli/        commander 命令注册（status / config / pull / exec / assets / pack / deck / vcs / import / host / fetch / migrate / review）
+  hub/        hub 守护进程：编辑器入站 + TCP/WS 扇出 + S2 控制通道（阶段 4）
+  mcp/        MCP stdio 服务与 10 个工具（阶段 4）
+  cli/        commander 命令注册（status / config / pull / exec / assets / pack / deck / vcs / import / host / fetch / migrate / review / hub）
 docs/schemas/ 契约文档：pack.yaml / deck.yaml / assets.yaml / cards.csv / objects.csv / registry.yaml
-              + 阶段 3 的 import.yaml / host / ttsmod（共九份）
+              + 阶段 3 的 import.yaml / host / ttsmod + 阶段 4 的 hub-control（共十份）
 locales/      zh-CN.json、en-US.json
 tests/unit/   不依赖 TTS 的单元测试
-tests/integration/  验收骨架（phase1 需 TTS；phase2b / 2c / 3 为逐用例 it.skip 清单）
+tests/integration/  验收骨架（phase1 需 TTS；phase2b / 2c / 3 / 4 为逐用例 it.skip 清单）
 ```
 
 约定：TypeScript ESM（`.ts`，import/export）、target ES2022 / module NodeNext / strict；
@@ -558,7 +777,8 @@ tests/integration/  验收骨架（phase1 需 TTS；phase2b / 2c / 3 为逐用�
 `npm test` 与 `npm run test:integration` 都会跳过它（输出 10 skipped）。
 
 `tests/integration/phase2b.acceptance.test.ts` / `phase2c.acceptance.test.ts` /
-`phase3.acceptance.test.ts` 是后续阶段的验收骨架：**逐用例 `it.skip`**（不是 describe.skip），
+`phase3.acceptance.test.ts` / `phase4.acceptance.test.ts` 是后续阶段的验收骨架：
+**逐用例 `it.skip`**（不是 describe.skip），
 每个用例体只有 TODO 与一条 `todo(...)` 守卫（未实现就打开会明确失败，不给假绿）。开启方式：
 按用例内 TODO 装配夹具后删掉该用例的 `.skip`，再跑 `npx vitest run tests/integration/<文件>`
 （或 `npm run test:integration`）。phase3 的 12 个场景覆盖 import / host / migrate / pack export /

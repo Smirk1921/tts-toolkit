@@ -354,6 +354,9 @@
             "dataDir": "Override the approval data directory (defaults to the config's data_dir)"
           }
         }
+      },
+      "hub": {
+        "description": "Start the hub daemon: owns the editor port and serves TCP/WS fanout plus a loopback-only control channel (for CLI delegation and MCP)"
       }
     },
     "error": {
@@ -365,8 +368,10 @@
     },
     "status": {
       "connected": "Connected to the TTS editor (port {port})",
+      "connectedViaHub": "Connected to the TTS editor via hub (control channel 127.0.0.1:{port})",
       "portInUse": "Port {port} is already in use: close the program occupying it (usually another tts-toolkit instance) and retry",
       "notRunning": "No running TTS editor detected: start the game and open the Editor first",
+      "hubOnlineTtsOffline": "Hub is online but the TTS editor is not connected: start the game and open the Editor first",
       "version": "Script engine version: {version}",
       "objects": "Objects in the current save: {count}"
     },
@@ -523,14 +528,16 @@
       "done": "Pull complete: {scripts} script(s), {ui} UI file(s)",
       "empty": "Nothing to pull: already up to date",
       "target": "Output directory: {dir}",
-      "notConnected": "Cannot pull scripts: not connected to the TTS editor"
+      "notConnected": "Cannot pull scripts: not connected to the TTS editor",
+      "viaHub": "Hub is online: delegating this pull to the hub"
     },
     "exec": {
       "timeout": "Lua execution timed out after {seconds}s: the script may be stuck in a loop, or blocked by an in-game dialog",
       "luaError": "Lua execution failed: {message}",
       "multipleReturns": "Lua returned {count} values; only the first is used (the rest are ignored)",
       "notConnected": "Cannot run Lua: not connected to the TTS editor",
-      "luaErrorObject": "Failing object guid: {guid}"
+      "luaErrorObject": "Failing object guid: {guid}",
+      "viaHub": "Hub is online: delegating this execution to the hub"
     },
     "assets": {
       "summary": "Asset check finished: {alive} alive, {dead} dead",
@@ -670,6 +677,17 @@
           "fileMissing": "finished file missing"
         }
       }
+    },
+    "hub": {
+      "option": {
+        "port": "Control channel port (default 39995; bound to 127.0.0.1 only)",
+        "editorPort": "TTS editor port (default 39998; TTS connects inbound)",
+        "tcpPort": "TCP fanout port (default 39997)",
+        "wsPort": "WebSocket fanout port (default 39996)",
+        "logFile": "Log file path (appended; by default logs go to stdout only)"
+      },
+      "started": "Hub started: control channel http://127.0.0.1:{controlPort}/v1; editor port {editorPort}; TCP fanout {tcpPort}; WS fanout {wsPort} (Ctrl+C to stop)",
+      "stopped": "Hub stopped"
     }
   },
   "error": {
@@ -978,6 +996,9 @@
       "corrupt": "ZIP structure damaged or entry cannot be decompressed: {detail}",
       "exportWriteFailed": "Failed to write .ttsmod: {path} ({detail})",
       "strictMissing": "Assets incomplete (strict mode): {count} asset(s) missing or extension detection failed; packing aborted, no .ttsmod produced:\n{list}"
+    },
+    "hub": {
+      "delegateFailed": "Hub delegation failed: {message} (no fallback to standalone mode while the hub is online; check that tts hub is still running)"
     }
   },
   "host": {
@@ -1114,6 +1135,50 @@
       "unregisteredType": "Object type {type} is not registered in the type registry; importing it as an open type: {name}",
       "skippedFiles": "Deck {deck} skipped non-image files or subdirectories (not imported): {files}",
       "unmappedObjectFile": "Object {name} field {field} could not be mapped to an objects.csv column; the file is still copied but not recorded in the ledger"
+    }
+  },
+  "mcp": {
+    "tool": {
+      "tts_status": {
+        "title": "TTS status",
+        "description": "Query hub and TTS editor status: returns hub process info, TTS connection state, script engine version, and current save object count. Read-only, no side effects."
+      },
+      "tts_pull": {
+        "title": "Pull scripts to workspace",
+        "description": "Pull all in-game scripts and UI into the pack workspace at root (writes .lua / .xml files and creates directories). Writes local files only; does not modify anything in the game."
+      },
+      "tts_exec": {
+        "title": "Execute Lua (has side effects)",
+        "description": "Run a Lua snippet inside the TTS process and return its JSON result; defaults to the global script (guid -1). Has side effects: the snippet can read and change game state, so only run trusted code."
+      },
+      "tts_assets": {
+        "title": "Asset URL liveness check",
+        "description": "Check whether a list of asset URLs is reachable (HTTP probe): returns the total, alive/dead counts, and the dead list. Read-only network requests; writes no files."
+      },
+      "tts_pack_list": {
+        "title": "List registered packs",
+        "description": "List the packs registered in .registry.yaml; returns an empty list instead of an error when the registry is absent. Read-only."
+      },
+      "tts_deck_slice": {
+        "title": "Slice deck atlas",
+        "description": "Slice a deck atlas into individual card images by grid and write them into outDir. Writes local files. When several decks match the atlas, pass deckKey or deckGuid to disambiguate; otherwise the call fails."
+      },
+      "tts_deck_plan": {
+        "title": "Replacement plan (dry run)",
+        "description": "Dry-run replacement rules against a save JSON and list the affected URLs with statistics. Read-only; writes nothing."
+      },
+      "tts_import": {
+        "title": "Import assets into workspace",
+        "description": "Import assets into a pack workspace according to an import.yaml manifest (writes local files). With dryRun=true it only validates the manifest and computes the import plan without touching disk."
+      },
+      "tts_diff": {
+        "title": "Diff workspace vs game",
+        "description": "Diff the local workspace against the in-game scripts/UI. Read-only: nothing is written or pushed."
+      },
+      "tts_push": {
+        "title": "Push to game and reload (dangerous)",
+        "description": "Dangerous: writes workspace scripts/UI back into the game and triggers a reload (SaveAndPlay); entries without script/ui fields are deleted by TTS. Requires an explicit confirm=true; the call is rejected otherwise."
+      }
     }
   }
 }

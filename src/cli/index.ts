@@ -22,6 +22,7 @@ import { initI18n, t, type Lang } from "../i18n/index.js";
 import { assetsCommand } from "./commands/assets.js";
 import { configCommand } from "./commands/config.js";
 import { deckCommand } from "./commands/deck.js";
+import { editCommand } from "./commands/edit.js";
 import { execCommand } from "./commands/exec.js";
 import { fetchCommand } from "./commands/fetch.js";
 import { hostCommand } from "./commands/host.js";
@@ -187,6 +188,8 @@ program.addCommand(reviewCommand);
 program.addCommand(hubCommand);
 // 阶段 5 新增：watch 长驻命令（阶段 5 收尾补注册；实现见 commands/watch.ts）
 program.addCommand(watchCommand);
+// 阶段 6 新增：edit 跨编辑器打开脚本（6A 轻量层；实现见 commands/edit.ts）
+program.addCommand(editCommand);
 localizeCommandTree(program);
 
 /**

@@ -279,6 +279,19 @@
           "dir": "输出目录（不存在时自动创建）"
         }
       },
+      "edit": {
+        "description": "在配置的编辑器中打开指定对象的 Lua 脚本（阶段 6 / 6A 轻量层）",
+        "argument": {
+          "name": "对象名（与 TTS 内的对象名一致；全局脚本用 \"Global\"）"
+        },
+        "option": {
+          "line": "定位到指定行（1-based）",
+          "column": "定位到指定列（1-based）",
+          "adapter": "编辑器适配器 id（vscode / jetbrains / sublime / notepadpp / system / command）",
+          "command": "自定义编辑器命令模板（仅 --adapter command 时必填；模板里用 file/line/column 三个占位符，详见 docs/editor.md）",
+          "root": "工作区根目录（缺省当前目录）"
+        }
+      },
       "exec": {
         "description": "在当前存档的全局脚本中执行一段 Lua 代码",
         "argument": {
@@ -580,6 +593,11 @@
       "notConnected": "无法拉取脚本：尚未连接到 TTS 编辑器",
       "viaHub": "hub 在线：本次拉取委托 hub 执行"
     },
+    "edit": {
+      "opened": "已在编辑器中打开：{name}（{path}）",
+      "adapterUnavailable": "编辑器适配器不可用：{adapter}（命令：{command}）。请确认已安装并加入 PATH，或用 --adapter 切换其他适配器",
+      "notConnected": "无法打开脚本：尚未连接到 TTS 编辑器"
+    },
     "exec": {
       "timeout": "Lua 执行超时（{seconds} 秒）：脚本可能陷入死循环，或被游戏内弹窗阻塞",
       "luaError": "Lua 执行出错：{message}",
@@ -755,6 +773,14 @@
     "UNPACK_FAILED": "解包失败：{msg}",
     "TTSMOD_INVALID": ".ttsmod 文件无效或已损坏：{msg}",
     "SAVE_INVALID": "存档 JSON 无效：{msg}",
+    "editor": {
+      "adapterUnknown": "未知的编辑器适配器 id：{adapter}（可选值：vscode / jetbrains / sublime / notepadpp / system / command）",
+      "commandRequired": "使用 --adapter command 时必须同时通过 --command 提供命令模板（或设置环境变量 TTS_EDITOR_COMMAND）",
+      "templateInvalid": "编辑器命令模板无效（缺少 {file} 占位符）：{template}",
+      "spawnFailed": "启动编辑器失败：{command}（{detail}）",
+      "objectNotFound": "工作区中未找到对象 \"{name}\" 的脚本。现有候选：{candidates}。请先运行 tts pull 拉取脚本，或检查对象名拼写",
+      "lineColumnInvalid": "选项 {option} 的值必须是 ≥ 1 的整数，收到：{value}"
+    },
     "pack": {
       "atlasTooManyCells": "需要 {minCells} 个格子，超过单张图集的上限 {maxSlots} 格",
       "atlasGridTooFine": "图集 {imageWidth}x{imageHeight} 按 {columns}x{rows} 网格切分后单格宽或高为 0",

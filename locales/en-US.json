@@ -279,6 +279,19 @@
           "dir": "Output directory (created when missing)"
         }
       },
+      "edit": {
+        "description": "Open an object's Lua script in the configured editor (phase 6 / 6A lightweight layer)",
+        "argument": {
+          "name": "Object name (must match the in-game name; use \"Global\" for the global script)"
+        },
+        "option": {
+          "line": "Jump to the given line (1-based)",
+          "column": "Jump to the given column (1-based)",
+          "adapter": "Editor adapter id (vscode / jetbrains / sublime / notepadpp / system / command)",
+          "command": "Custom editor command template (required with --adapter command; the template uses the file/line/column placeholders, see docs/editor.md)",
+          "root": "Workspace root directory (defaults to current directory)"
+        }
+      },
       "exec": {
         "description": "Run a Lua snippet in the current save (global script)",
         "argument": {
@@ -580,6 +593,11 @@
       "notConnected": "Cannot pull scripts: not connected to the TTS editor",
       "viaHub": "Hub is online: delegating this pull to the hub"
     },
+    "edit": {
+      "opened": "Opened in editor: {name} ({path})",
+      "adapterUnavailable": "Editor adapter unavailable: {adapter} (command: {command}). Make sure it is installed and on PATH, or use --adapter to pick another adapter",
+      "notConnected": "Cannot open script: not connected to the TTS editor"
+    },
     "exec": {
       "timeout": "Lua execution timed out after {seconds}s: the script may be stuck in a loop, or blocked by an in-game dialog",
       "luaError": "Lua execution failed: {message}",
@@ -755,6 +773,14 @@
     "UNPACK_FAILED": "Unpack failed: {msg}",
     "TTSMOD_INVALID": "Invalid or corrupted .ttsmod file: {msg}",
     "SAVE_INVALID": "Invalid save JSON: {msg}",
+    "editor": {
+      "adapterUnknown": "Unknown editor adapter id: {adapter} (valid values: vscode / jetbrains / sublime / notepadpp / system / command)",
+      "commandRequired": "--adapter command requires a command template via --command (or the TTS_EDITOR_COMMAND environment variable)",
+      "templateInvalid": "Invalid editor command template (missing the {file} placeholder): {template}",
+      "spawnFailed": "Failed to launch editor: {command} ({detail})",
+      "objectNotFound": "Script for object \"{name}\" not found in the workspace. Available candidates: {candidates}. Run tts pull first, or check the spelling of the object name",
+      "lineColumnInvalid": "Option {option} expects an integer >= 1, got: {value}"
+    },
     "pack": {
       "atlasTooManyCells": "Needs {minCells} cells, exceeding the single-atlas limit of {maxSlots}",
       "atlasGridTooFine": "Atlas {imageWidth}x{imageHeight} is too small for a {columns}x{rows} grid: a cell would be 0 pixels wide or tall",

@@ -38,11 +38,17 @@
  *   slice 不注入 selectCandidate——HTTP 场景无交互，多候选时 sliceAtlas 抛
  *   SLICE_AMBIGUOUS（PackError → 400 HUB_PACK_ERROR），调用方应先用 deckKey /
  *   deckGuid 消歧后重试；
- * - /v1/push 是本阶段 push 的唯一通路：collectPushItems（骨架，只收集本地
- *   scripts/ + ui/ 清单）→ 读取文件内容组装 scriptStates → saveAndPlay 写回并
- *   重载。不做 baseline hash / 备份目录 / 素材改动检测（阶段 5 的事）；注意
- *   scriptStates 缺 script / ui 字段时 TTS 会删除对应内容（协议语义，见
- *   src/session/scripts.ts 的警告）。
+ * - /v1/push（阶段 5 写入路径）：整条流水线委托 src/pack/push.ts 的
+ *   pushSaveAndPlay（素材改动检测 → 基线冲突检测 → 备份 → 无变化过滤 →
+ *   强制带 ui → saveAndPlay → 回读校验 → 更新基线），并注入 daemon.server
+ *   复用 hub 已绑定的编辑器端口（坑 17，绝不二次绑定 39998）。confirm 门不变
+ *   （body.confirm !== true → 400 HUB_CONFIRM_REQUIRED）；请求体扩展字段
+ *   dryRun / forceScriptsOnly / skipBackup / skipBaselineCheck（可选布尔）与
+ *   backupRetention（可选正数）逐项校验后透传，缺省 dryRun=false（confirm 已
+ *   表达实写意图）、backupRetention=20；响应体
+ *   `{ok:true, dryRun, pushed, skipped, items(=pushed+skipped), backupDir?,
+ *   baselineConflicts?, assetChanges?}`，业务 PackError 由 respondError 统一
+ *   映射为 400 HUB_PACK_ERROR + details.packCode。
  *
  * 本模块不产出面向用户的文案：错误 message 是协议层英文短句（消费方是 MCP 工具
  * 层与运维日志，双语呈现由 MCP 层负责），与 src/hub/lifecycle.ts 的日志同一口径
@@ -50,7 +56,6 @@
  * 后原样透传。
  */
 
-import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 
@@ -61,7 +66,7 @@ import { diffWorkspace } from "../pack/diff.js";
 import { importAssets } from "../pack/import.js";
 import { PackError } from "../pack/packyaml.js";
 import { pullFromGame } from "../pack/pull.js";
-import { collectPushItems } from "../pack/push.js";
+import { pushSaveAndPlay } from "../pack/push.js";
 import { readRegistry } from "../pack/registry.js";
 import { InboundId } from "../protocol/messages.js";
 import { luaGetObjectCount, luaGetVersion } from "../session/lua.js";
@@ -84,6 +89,9 @@ const FORBIDDEN_HOSTS: ReadonlySet<string> = new Set(["", "0.0.0.0", "::", "0:0:
 
 /** 请求体大小上限：1MB。 */
 const MAX_BODY_BYTES = 1_048_576;
+
+/** /v1/push 请求不带 backupRetention 时的备份保留份数（与 pushSaveAndPlay 缺省一致）。 */
+const DEFAULT_BACKUP_RETENTION = 20;
 
 /** /v1/status 探测 TTS 时单次 exec 的超时毫秒数。 */
 const TTS_PROBE_TIMEOUT_MS = 2_000;
@@ -359,6 +367,25 @@ function optionalPositiveNumber(body: Record<string, unknown>, field: string): n
     return value;
   }
   throw new BadRequestError(`invalid field: ${field} (positive finite number required)`);
+}
+
+/**
+ * 从请求体取可选的布尔字段（/v1/push 的 dryRun / forceScriptsOnly / skipBackup /
+ * skipBaselineCheck 等开关共用）。
+ * @param body 已解析的请求体
+ * @param field 字段名（用于错误消息）
+ * @returns 字段值；缺省时 undefined（由调用方决定缺省语义）
+ * @throws BadRequestError 字段存在但不是布尔值时
+ */
+function optionalBoolean(body: Record<string, unknown>, field: string): boolean | undefined {
+  const value = body[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  throw new BadRequestError(`invalid field: ${field} (boolean required)`);
 }
 
 /**
@@ -1011,12 +1038,32 @@ class ControlServerImpl implements ControlServer {
   }
 
   /**
-   * POST /v1/push：写回并重载（本阶段 push 的唯一通路）。
+   * POST /v1/push：把本地工作区的脚本 / UI 改动安全地写回运行中的 TTS（阶段 5）。
    *
-   * confirm 门：body.confirm 不严格等于 true 时 400 HUB_CONFIRM_REQUIRED。
-   * 流程：collectPushItems（骨架，收集本地 scripts/ + ui/ 清单）→ 逐条读取文件
-   * 内容组装完整 scriptStates → daemon.scripts.saveAndPlay 写回并重载。
-   * 不做 baseline hash / 备份目录 / 素材改动检测（阶段 5 的事）。
+   * confirm 门：body.confirm 不严格等于 true 时 400 HUB_CONFIRM_REQUIRED（写回是
+   * 危险操作，HTTP 层显式确认不变；CLI / MCP 调用方各自再设一道门）。
+   *
+   * 流程：整条流水线委托 {@link pushSaveAndPlay}（素材改动检测 → 基线冲突检测 →
+   * 备份 → 无变化过滤 → 强制带 ui → saveAndPlay → 回读校验 → 更新基线），本路由
+   * 只做三件事：
+   * 1. 请求侧字段校验（root 必填；dryRun / forceScriptsOnly / skipBackup /
+   *    skipBaselineCheck 可选布尔、backupRetention 可选正数，非法即 400）；
+   * 2. 坑 17 注入：传 `server: this.daemon.server` 复用 hub 已绑定的编辑器端口
+   *    39998，绝不允许 pushSaveAndPlay 内部再起 withEditorServer 二次独占；
+   * 3. 缺省值对齐 MCP `tts_push` 语义：confirm 已过门 → dryRun 缺省 false
+   *    （实写），backupRetention 缺省 20——与 pushSaveAndPlay 自身"dryRun 缺省
+   *    true"的安全缺省刻意不同，因为 HTTP 层的 confirm:true 已表达实写意图。
+   *
+   * 不向 pushSaveAndPlay 传 confirm 函数：CLI 交互确认门只在 CLI 进程内有意义，
+   * hub 场景由本路由的 confirm:true 一门拦截。
+   *
+   * 响应体：`{ok:true, dryRun, pushed, skipped, items, backupDir?, baselineConflicts?,
+   * assetChanges?}`——items 是 `pushed + skipped` 的向后兼容别名；backupDir 仅在
+   * 实写且未 skipBackup 时携带；baselineConflicts / assetChanges 仅在检测到且被
+   * 对应开关放行时携带（否则已按 400 HUB_PACK_ERROR 抛错中断）；dryRun=true 时
+   * pushed 是"若实写将写入"的对象数。业务失败（PackError）由 respondError 统一
+   * 映射为 400 HUB_PACK_ERROR + details.packCode。
+   *
    * @param req 进入的请求
    * @param res 目标响应
    */
@@ -1030,20 +1077,33 @@ class ControlServerImpl implements ControlServer {
       sendError(res, 400, "HUB_CONFIRM_REQUIRED", "this operation requires confirm:true in the request body");
       return;
     }
-    const push = await collectPushItems({ root });
-    const states: ScriptState[] = [];
-    for (const item of push.items) {
-      const state: ScriptState = { name: item.name, guid: item.guid };
-      if (item.scriptPath !== undefined) {
-        state.script = await readFile(item.scriptPath, "utf8");
-      }
-      if (item.uiPath !== undefined) {
-        state.ui = await readFile(item.uiPath, "utf8");
-      }
-      states.push(state);
-    }
-    await this.daemon.scripts.saveAndPlay(states);
-    sendJson(res, 200, { ok: true, items: push.items.length });
+    const dryRun = optionalBoolean(body, "dryRun") ?? false;
+    const forceScriptsOnly = optionalBoolean(body, "forceScriptsOnly") ?? false;
+    const skipBackup = optionalBoolean(body, "skipBackup") ?? false;
+    const skipBaselineCheck = optionalBoolean(body, "skipBaselineCheck") ?? false;
+    const backupRetention = optionalPositiveNumber(body, "backupRetention") ?? DEFAULT_BACKUP_RETENTION;
+    const result = await pushSaveAndPlay({
+      root,
+      server: this.daemon.server, // 坑 17：复用 hub 已绑定的编辑器端口，绝不二次绑定
+      dryRun,
+      forceScriptsOnly,
+      skipBackup,
+      skipBaselineCheck,
+      backupRetention,
+      // hub 场景 confirm 已由本路由 confirm:true 拦截，不传 CLI 交互确认函数
+    });
+    sendJson(res, 200, {
+      ok: true,
+      dryRun: result.dryRun,
+      pushed: result.pushed,
+      skipped: result.skipped,
+      items: result.pushed + result.skipped, // 向后兼容别名（旧客户端的 items 计数）
+      ...(result.backupDir !== undefined ? { backupDir: result.backupDir } : {}),
+      ...(result.baselineConflicts !== undefined
+        ? { baselineConflicts: result.baselineConflicts }
+        : {}),
+      ...(result.assetChanges !== undefined ? { assetChanges: result.assetChanges } : {}),
+    });
   }
 
   /**

@@ -10,12 +10,26 @@
  * 5. 逐对象落盘：GUID "-1"（全局）写 Global.lua / Global.xml，其他对象写
  *    `<guid>.<净化名>.lua` / `.xml`——复用 layout 的 scriptFileName / uiFileName，
  *    与 `tts pull`（src/cli/commands/pull.ts）及 unpack / build 的命名完全一致；
- * 6. 缺字段即删除（见下）。
+ * 6. 缺字段即删除（见下）；
+ * 7. 写 baseline（阶段 5 写入路径）：落盘完成后调 safety/baseline.ts 的
+ *    writeBaseline，把"本次拉取时游戏侧各对象 script / ui 的归一化 sha256"记到
+ *    `<root>/.tts/baseline.json`——push 前 diffBaseline 才有可信对照基准
+ *    （否则游戏侧被别人改过也发现不了）。states 就是第 4 步 getScripts 拿到的
+ *    快照，不重新拉一次。
  *
  * 三个关键决策（都有明确理由，不要凭直觉"优化"掉）：
  * - 【不写骨架】本命令不更新 .tts/skeleton.json：骨架由 unpack 单独生成
  *   （用户已确认的决策）。在线增量拉取不重建骨架，避免用当前存档覆盖离线回路
  *   （约束 8）的定点替换基准；
+ * - 【baseline 与工作区同步】每次 pull 都重写 baseline.json 的 entries /
+ *   assetFiles / updatedAt（writeBaseline 内部会保留旧 lastPushAt——推送史由
+ *   push 成功后的 touchLastPushAt 单独盖章，pull 不清除也不设置它）。这样
+ *   push 前的 diffBaseline 对比的是"上次 pull 时游戏侧的样子"，游戏侧被人
+ *   改过就能检测出来。写入失败绝不能静默吞掉：基线没更新却让 pull 报成功，
+ *   用户会在"基线过期"的错觉下放行下一次 push；
+ * - 【素材 hash 顺带入基线】writeBaseline 同时按其口径扫描 decks / objects
+ *   的文本素材清单记 hash，为 push 前的素材漂移拦截（约束 7：push 协议不收
+ *   素材字段）提供对照。素材目录不存在按"无素材"处理，不报错；
  * - 【缺字段即删除】TTS 协议规定：scriptStates 中某对象不提供 script / ui 字段，
  *   对应的 Lua / UI 就会被删除（见 src/session/scripts.ts 的 JSDoc 警告）。
  *   拉取必须忠实反映存档现状：state.script / state.ui 缺省时，删除本地
@@ -37,14 +51,22 @@
  * 错误约定：
  * - 工作区 / 写盘 / 命名问题抛 {@link PackError}（错误码见下）；
  * - 协议 / 会话层错误（未连接 TTS、端口占用、等待 GameLoaded 超时等）原样上抛，
- *   便于 CLI 层用 src/cli/with-server.ts 的分类助手给出准确文案。
+ *   便于 CLI 层用 src/cli/with-server.ts 的分类助手给出准确文案；
+ * - 第 7 步 writeBaseline 的失败（基线写盘 / 素材扫描 IO 错误）原样上抛，让 pull
+ *   整体失败——不包装成 PULL_FAILED，保住 baseline 模块的机器可读错误码。
  *
  * 错误码（{@link PackError.code}）：
  * - "PACK_NOT_FOUND" 工作区不合法：`<root>/pack.yaml` 不存在（由 readPackYaml 抛出）
  * - "PULL_FAILED"    创建目录布局、写文件、删除过期文件等出错时
+ * - "BASELINE_WRITE_FAILED"      写 `.tts/baseline.json` 失败（writeBaseline 上抛）
+ * - "BASELINE_ASSET_SCAN_FAILED" 扫描 decks / objects 素材清单失败（writeBaseline 上抛）
  *
  * 本模块新增的 i18n 键（locales/*.json 由 Run 2 补齐；缺键时 t() 原样输出键名）：
  * - `error.pack.pull.failed` {detail}
+ *
+ * 本模块沿用（不改文案）的 i18n 键——来自 safety/baseline.ts 的模块头登记：
+ * - `error.baseline.writeFailed` {path} {detail}
+ * - `error.baseline.assetScanFailed` {detail}
  */
 
 import { readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -53,6 +75,7 @@ import path from "node:path";
 import { withEditorServer } from "../cli/with-server.js";
 import { t } from "../i18n/index.js";
 import { GLOBAL_GUID } from "../protocol/messages.js";
+import { writeBaseline } from "../safety/baseline.js";
 import { SessionScripts, type ScriptState } from "../session/scripts.js";
 import { ensureLayout, scriptFileName, scriptsDir, uiDir, uiFileName } from "./layout.js";
 import { PackError, readPackYaml } from "./packyaml.js";
@@ -315,6 +338,10 @@ async function applyState(root: string, state: ScriptState, counters: PullCounte
  * @throws PackError code="PACK_NOT_FOUND" `<root>/pack.yaml` 不存在时
  * @throws PackError code="PACK_INVALID" pack.yaml 内容非法时（readPackYaml 抛出）
  * @throws PackError code="PULL_FAILED" 目录布局、写文件、删文件出错时
+ * @throws PackError code="BASELINE_WRITE_FAILED" 写 `.tts/baseline.json` 失败时
+ *   （writeBaseline 上抛；此时脚本 / UI 可能已部分落盘——先写盘后记基线）
+ * @throws PackError code="BASELINE_ASSET_SCAN_FAILED" 扫描 decks / objects 素材清单
+ *   失败时（writeBaseline 上抛；同上，脚本 / UI 可能已部分落盘）
  * @throws {PortInUseError} 编辑器端口 39998 被占用时（withEditorServer 抛出，原样上抛）
  * @throws Error TTS 未运行（连不上 39999）或等待 GameLoaded 超时时（原样上抛，
  *   由 CLI 层按 src/cli/with-server.ts 的分类助手给出文案）
@@ -334,24 +361,34 @@ export async function pullFromGame(opts: PullOptions): Promise<PullResult> {
   const counters: PullCounters = { scriptsWritten: 0, uiWritten: 0, skippedNoChange: 0 };
 
   // —— 3~5. 独占编辑器端口 → 拉快照 → 逐对象落盘 ——
-  // 协议 / 会话层错误（端口占用 / 未连接 / 超时）不在这里包装，原样上抛给 CLI 分类
+  // 协议 / 会话层错误（端口占用 / 未连接 / 超时）不在这里包装，原样上抛给 CLI 分类。
+  // states 提升到外层：两条路径共用第 4 步拿到的同一份快照（第 7 步写 baseline 复用，不重新拉）
+  let states: ScriptState[];
   if (opts.server !== undefined) {
     // hub 注入路径：复用 hub 已绑定的 39998，不再独占
     const scripts = new SessionScripts(opts.server);
-    const states = await scripts.getScripts(opts.timeoutMs);
+    states = await scripts.getScripts(opts.timeoutMs);
     for (const state of states) {
       await guard(`同步对象 ${state.name}`, () => applyState(root, state, counters));
     }
   } else {
     // 独立模式：临时独占 39998，命令结束立即释放
+    let independentStates: ScriptState[] = [];
     await withEditorServer(async ({ scripts }) => {
-      const states = await scripts.getScripts(opts.timeoutMs);
-      for (const state of states) {
+      independentStates = await scripts.getScripts(opts.timeoutMs);
+      for (const state of independentStates) {
         // 单个对象的问题（命名非法 / 写盘失败）统一转成 PackError
         await guard(`同步对象 ${state.name}`, () => applyState(root, state, counters));
       }
     });
+    states = independentStates;
   }
+
+  // —— 6~7. pull 成功后写 baseline（保持 baseline 与工作区同步，见模块头注释）——
+  // writeBaseline 的 IO 失败（BASELINE_WRITE_FAILED / BASELINE_ASSET_SCAN_FAILED）
+  // 不吞错、不包装，原样上抛让 pull 整体失败：基线没更新却报成功，会让用户在
+  // "基线过期"的错觉下放行下一次 push（漏检游戏侧他人改动）。
+  await writeBaseline(root, states);
 
   return counters;
 }

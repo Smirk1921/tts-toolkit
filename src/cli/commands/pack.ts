@@ -6,8 +6,11 @@
  * - `tts pack init <dir>`    新建工作区（initPack）
  * - `tts pack unpack <save>` 从存档 JSON / .ttsmod 离线建工作区（unpackSave）
  * - `tts pack pull`          从运行中的 TTS 拉脚本 / UI（pullFromGame，只读）
- * - `tts pack push`          列出将推回游戏的清单（collectPushItems，骨架实现）
- * - `tts pack diff`          工作区 ↔ 游戏差异（diffWorkspace，只读）
+ * - `tts pack push`          安全写回运行中的 TTS（pushSaveAndPlay，阶段 5 写入路径：
+ *                            默认 dry-run、--yes 实写；push 前自动备份 + 基线冲突
+ *                            检测 + 素材改动拦截；hub 在线时委托 hub 执行）
+ * - `tts pack diff`          工作区 ↔ 游戏差异（diffWorkspace，只读；--unified 时
+ *                            modified 条目附逐行 unified hunks）
  * - `tts pack build`         合成 TTS 可加载的存档 JSON（buildSave，含 --dry-run）
  * - `tts pack list`          列出 .registry.yaml 里注册的全部图包（readRegistry）
  * - `tts pack status <dir>`  单个注册图包的详细信息（findPack）
@@ -28,7 +31,14 @@
  *   由各模块原样上抛，此处统一按错误码出口呈现）；
  * - 约束 7：push（messageID 1）只接收脚本 / UI，不接收素材字段。本文件不为 push
  *   提供任何素材相关选项，也不读 / 改素材 URL；素材改动只能走 `pack build` 的
- *   离线回路（约束 8）；
+ *   离线回路（约束 8）。push 流水线的安全闸（备份 / 基线 / 素材检测 / 强制带 ui）
+ *   全部在 src/pack/push.ts 的 pushSaveAndPlay 内实现，命令层只负责旗标与确认；
+ * - `pack push` 的双路（阶段 5）：hub 在线（tryHubClient 命中）→ 委托 hub 控制通道
+ *   /v1/push（hub 进程持有编辑器端口，绝不在 CLI 进程再绑 39998；委托失败报错退
+ *   出 1，不回退独立模式）；hub 离线 → 独立模式直接调 pushSaveAndPlay。默认
+ *   dry-run（只报告将推送多少、不写游戏），--yes 才实写（备份照做）；交互确认门
+ *   confirmPush 作为防御性二次闸注入（当前旗标决策下实写必带 --yes，该门不会
+ *   触发询问，保留为将来旗标语义变化的兜底）；
  * - 错误处理：PackError 按 `` `error.${code}` `` 取文案（占位符 {msg}），其余异常
  *   统一走 `error.unknown`，两者都以退出码 1 结束。与 src/cli/with-server.ts 的
  *   reportError 分工不同：pack 模块抛的是带机器可读 code 的 PackError，
@@ -47,7 +57,14 @@
  *   `cli.pack.unpack.done` {save} {outDir} {scripts} {ui} {objects}、
  *   `cli.pack.pull.done` {scripts} {ui} {skipped}、`cli.pack.push.note`、
  *   `cli.pack.diff.summary` {added} {modified} {deleted}、`cli.pack.build.done`
- *   {outPath} {scripts} {ui} {objects}、`cli.pack.build.dryRunNote`、
+ *   {outPath} {scripts} {ui} {objects}、`cli.pack.build.dryRunNote`；
+ * - 阶段 5 push / diff 新增：`cli.command.pack.push.option.dryRun`、
+ *   `cli.command.pack.push.option.yes`、`cli.command.pack.push.option.forceScriptsOnly`、
+ *   `cli.command.pack.push.option.noBackup`、`cli.command.pack.push.option.noBaselineCheck`、
+ *   `cli.command.pack.push.option.backupRetention`、`cli.command.pack.diff.option.unified`、
+ *   `cli.pack.push.viaHub`、`cli.pack.push.dryRunSummary` {pushed} {skipped}、
+ *   `cli.pack.push.pushedSummary` {pushed} {skipped} {backupDir}、
+ *   `cli.pack.push.confirmMessage` {count}、`error.cli.invalidBackupRetention`；
  *   `cli.pack.list.empty`、`cli.pack.list.header` {count}、
  *   `cli.pack.status.notFound` {dir}、`cli.pack.open.notFound` {dir}、
  *   `cli.pack.open.done` {path}、`cli.pack.export.*`（done / readme / skipped /
@@ -85,16 +102,19 @@ import { locateDatadir } from "../../datadir/locate.js";
 import { walkSaveUrls } from "../../deck/patch.js";
 import { t } from "../../i18n/index.js";
 import { buildSave } from "../../pack/build.js";
-import { diffWorkspace } from "../../pack/diff.js";
+import { diffWorkspace, type DiffHunk } from "../../pack/diff.js";
 import { initPack } from "../../pack/init.js";
 import { PackError, readPackYaml } from "../../pack/packyaml.js";
 import { pullFromGame } from "../../pack/pull.js";
-import { collectPushItems, type PushItem } from "../../pack/push.js";
+import { collectPushItems, pushSaveAndPlay, type PushItem } from "../../pack/push.js";
 import { findPack, readRegistry, type PackEntry } from "../../pack/registry.js";
 import { unpackSave } from "../../pack/unpack.js";
 import { importAsUpstream, syncUpstream } from "../../pack/upstream.js";
+import { confirmPush } from "../../safety/confirm.js";
 import { formatConflict } from "../../vcs/conflicts.js";
 import { statusPorcelain } from "../../vcs/git.js";
+import { tryHubClient } from "../_shared.js";
+import { describeError } from "../with-server.js";
 
 // ---------------------------------------------------------------------------
 // 选项类型
@@ -122,6 +142,31 @@ interface PackUnpackOptions {
 interface PackRootOptions {
   /** 工作区根目录（默认 "."，由 commander 的默认值填入） */
   root: string;
+}
+
+/** `tts pack push` 的选项（阶段 5 写入路径；backupRetention 由 commander 保留为字符串） */
+interface PackPushOptions extends PackRootOptions {
+  /**
+   * 试运行旗标（--dry-run，默认 true）。注意：**实际决策只用 {@link yes}**——
+   * dryRun = !yes（--yes 是唯一的实写入口），本旗标仅用于 --help 展示缺省行为。
+   */
+  dryRun: boolean;
+  /** 实写确认（--yes）：唯一把 dryRun 置 false 的入口 */
+  yes: boolean;
+  /** 素材有改动时仍强制只推脚本（--force-scripts-only，用户自担风险） */
+  forceScriptsOnly: boolean;
+  /** push 前自动备份（--no-backup 关闭；commander 布尔取反，默认 true） */
+  backup: boolean;
+  /** 基线冲突检测（--no-baseline-check 跳过；commander 布尔取反，默认 true） */
+  baselineCheck: boolean;
+  /** 备份保留份数（--backup-retention，1-100；commander 原始字符串，本命令解析） */
+  backupRetention: string;
+}
+
+/** `tts pack diff` 的选项（--unified 时 modified 条目附逐行 hunks） */
+interface PackDiffOptions extends PackRootOptions {
+  /** 输出逐行 unified diff hunks（-u / --unified，默认 false） */
+  unified: boolean;
 }
 
 /** `tts pack build` 的选项 */
@@ -256,6 +301,54 @@ function defaultUnpackOutDir(name: string | undefined): string {
 function formatPushItem(item: PushItem): string {
   const files = [item.scriptPath, item.uiPath].filter((file): file is string => file !== undefined);
   return `  ${item.guid}  ${item.name}  ${files.join("  ")}`;
+}
+
+/**
+ * 把一条 modified 差异的逐行 hunks 渲染成多行文本（`pack diff --unified`）。
+ *
+ * 每块先输出头行 `` @@ -<localStart>,+<localLines.length> @@ ``（任务书约定的
+ * 简化 unified 头：本地起始行号 + 本地行数），随后 `- ` 前缀列出本地工作区行、
+ * `+ ` 前缀列出游戏侧行（方向与 diff.ts 的 status 语义一致：游戏侧相对本地，
+ * `+` 表示游戏里有而本地尚未落盘的内容；上下文行在两侧数组各出现一次，故
+ * 以两种前缀各显示一遍）。整块缩进两格，行内容缩进四格。
+ *
+ * @param hunks diffWorkspace（includeHunks: true）填充的 hunk 列表；缺省视为空
+ * @returns 每行一条的文本列表（不含换行；无 hunks 时为空数组）
+ */
+function formatHunkLines(hunks: readonly DiffHunk[] | undefined): string[] {
+  const lines: string[] = [];
+  for (const hunk of hunks ?? []) {
+    lines.push(`  @@ -${hunk.localStart},+${hunk.localLines.length} @@`);
+    for (const line of hunk.localLines) {
+      lines.push(`    - ${line}`);
+    }
+    for (const line of hunk.remoteLines) {
+      lines.push(`    + ${line}`);
+    }
+  }
+  return lines;
+}
+
+/**
+ * 打印 push 摘要（hub 委托与独立模式共用一行输出契约）。
+ * dry-run 打 `cli.pack.push.dryRunSummary` {pushed} {skipped}；实写打
+ * `cli.pack.push.pushedSummary` {pushed} {skipped} {backupDir}（无备份目录时 "-" 占位）。
+ * @param dryRun 是否试运行
+ * @param pushed 已写入（或将写入）的对象数
+ * @param skipped 无变化跳过的对象数
+ * @param backupDir 备份目录（dry-run / skipBackup 时缺省）
+ */
+function printPushSummary(
+  dryRun: boolean,
+  pushed: number,
+  skipped: number,
+  backupDir: string | undefined,
+): void {
+  if (dryRun) {
+    console.log(t("cli.pack.push.dryRunSummary", { pushed, skipped }));
+    return;
+  }
+  console.log(t("cli.pack.push.pushedSummary", { pushed, skipped, backupDir: backupDir ?? "-" }));
 }
 
 /**
@@ -520,21 +613,90 @@ const pullSub = new Command("pull")
   });
 
 /**
- * `tts pack push`：列出"将推回游戏"的脚本 / UI 清单（骨架实现，阶段 5 才实际推送）。
+ * `tts pack push`：把本地工作区的脚本 / UI 改动安全地写回运行中的 TTS（阶段 5）。
  *
- * 本命令只读工作区、不连 TTS、不调 saveAndPlay（约束 7）；清单行是纯数据，
- * 末行说明文字用 collectPushItems 返回的 note（= `cli.pack.push.note`，含对象数）。
+ * 安全语义（默认 dry-run）：
+ * - 默认（无 --yes）是试运行：走完整检测流水线（素材改动 → 基线冲突 → 无变化
+ *   过滤），只报告"将推送多少 / 跳过多少"，**不备份、不确认、不写游戏、不写基线**；
+ * - `--yes` 是唯一实写入口（dryRun = !yes）：实写前先自动备份游戏内全部
+ *   scriptStates（--no-backup 可关，--backup-retention 控制保留份数 1-100）；
+ * - `--no-baseline-check` 跳过基线冲突检测、`--force-scripts-only` 在素材有改动
+ *   时强制只推脚本（两者都是用户显式自担风险）；
+ * - 交互确认门 confirmPush 作为防御性二次闸注入 pushSaveAndPlay：当前旗标决策
+ *   （实写必带 --yes）下该门不会触发询问，保留为将来旗标语义变化的兜底。
+ *
+ * 双路（约束 7：push 协议只接收 scriptStates，命令层不提供任何素材选项）：
+ * - hub 在线（tryHubClient 命中）→ 委托 hub 控制通道 /v1/push（hub 进程持有编辑
+ *   端口 39998；confirm:true 由 CLI 显式给出，选项逐项透传）；委托失败输出
+ *   error.hub.delegateFailed 并退出 1，**不回退独立模式**；
+ * - hub 离线 → 独立模式直接调 pushSaveAndPlay（内部一次 withEditorServer）。
+ *
+ * 两种路径的摘要输出一致：dry-run 打 `cli.pack.push.dryRunSummary`，实写打
+ * `cli.pack.push.pushedSummary`（backupDir 缺省时以 "-" 占位）。
  */
 const pushSub = new Command("push")
   .description(t("cli.command.pack.push.description"))
   .option("--root <dir>", t("cli.command.pack.push.option.root"), ".")
-  .action(async (opts: PackRootOptions) => {
-    try {
-      const result = await collectPushItems({ root: opts.root });
-      for (const item of result.items) {
-        console.log(formatPushItem(item));
+  .option("--dry-run", t("cli.command.pack.push.option.dryRun"), true)
+  .option("--yes", t("cli.command.pack.push.option.yes"), false)
+  .option("--force-scripts-only", t("cli.command.pack.push.option.forceScriptsOnly"), false)
+  .option("--no-backup", t("cli.command.pack.push.option.noBackup"))
+  .option("--no-baseline-check", t("cli.command.pack.push.option.noBaselineCheck"))
+  .option("--backup-retention <n>", t("cli.command.pack.push.option.backupRetention"), "20")
+  .action(async (opts: PackPushOptions) => {
+    // —— 决策（任务书 §1.1）：--yes 优先；--yes 时 dryRun=false，否则恒为 true ——
+    const dryRun = !opts.yes;
+    const backupRetention = parseInt(opts.backupRetention, 10);
+    if (Number.isNaN(backupRetention) || backupRetention < 1 || backupRetention > 100) {
+      console.error(t("error.cli.invalidBackupRetention"));
+      process.exit(1);
+    }
+
+    const hub = await tryHubClient();
+    if (hub !== null) {
+      // —— hub 委托路径：推送在 hub 进程内执行（它持有编辑器端口 39998）——
+      console.log(t("cli.pack.push.viaHub"));
+      try {
+        const body = await hub.push(opts.root, true /* confirm */, {
+          dryRun,
+          forceScriptsOnly: opts.forceScriptsOnly,
+          skipBackup: !opts.backup,
+          skipBaselineCheck: !opts.baselineCheck,
+          backupRetention,
+        });
+        printPushSummary(body.dryRun, body.pushed, body.skipped, body.backupDir);
+      } catch (err) {
+        console.error(t("error.hub.delegateFailed", { message: describeError(err) }));
+        process.exit(1);
       }
-      console.log(result.note);
+      return;
+    }
+
+    // —— 独立模式（hub 不在线）：直接调 pushSaveAndPlay（内部一次 withEditorServer）——
+    try {
+      const result = await pushSaveAndPlay({
+        root: opts.root,
+        dryRun,
+        forceScriptsOnly: opts.forceScriptsOnly,
+        skipBackup: !opts.backup,
+        skipBaselineCheck: !opts.baselineCheck,
+        backupRetention,
+        confirm: async () => {
+          // 实写模式且非 --yes → 交互确认（当前旗标决策下不可达，兜底保留）；
+          // --yes 或 dryRun 都直接通过。确认清单现取 collectPushItems（懒执行，
+          // dry-run 路径零开销）。
+          if (!dryRun && !opts.yes) {
+            const collected = await collectPushItems({ root: opts.root });
+            return await confirmPush({
+              message: t("cli.pack.push.confirmMessage", { count: collected.items.length }),
+              details: collected.items.map((item) => formatPushItem(item).trimStart()),
+              assumeYes: opts.yes,
+            });
+          }
+          return true;
+        },
+      });
+      printPushSummary(result.dryRun, result.pushed, result.skipped, result.backupDir);
     } catch (err) {
       process.exit(reportPackError(err));
     }
@@ -546,13 +708,19 @@ const pushSub = new Command("push")
  * 条目按 status 分组输出（added → modified → deleted），组内顺序沿用
  * diffWorkspace 的排序（GUID 升序，同一 GUID 内 script 在 ui 之前）；
  * 条目行是纯数据，行尾的中文摘要（`cli.pack.diff.summary`）给出三个计数。
+ *
+ * `-u, --unified`（阶段 5）：把 includeHunks 传给 diffWorkspace，modified 条目
+ * 额外携带逐行 unified hunks，紧跟在条目行后逐块打印（格式见
+ * {@link formatHunkLines}）；added / deleted 及归一化后超过 5000 行的条目无
+ * hunks，静默跳过。
  */
 const diffSub = new Command("diff")
   .description(t("cli.command.pack.diff.description"))
   .option("--root <dir>", t("cli.command.pack.diff.option.root"), ".")
-  .action(async (opts: PackRootOptions) => {
+  .option("-u, --unified", t("cli.command.pack.diff.option.unified"), false)
+  .action(async (opts: PackDiffOptions) => {
     try {
-      const result = await diffWorkspace({ root: opts.root });
+      const result = await diffWorkspace({ root: opts.root, includeHunks: opts.unified });
       for (const status of DIFF_STATUSES) {
         const group = result.entries.filter((entry) => entry.status === status);
         if (group.length === 0) {
@@ -562,6 +730,11 @@ const diffSub = new Command("diff")
         for (const entry of group) {
           const local = entry.localPath === undefined ? "" : `  ${entry.localPath}`;
           console.log(`  ${entry.guid}  ${entry.name}  ${entry.kind}${local}`);
+          if (opts.unified) {
+            for (const line of formatHunkLines(entry.hunks)) {
+              console.log(line);
+            }
+          }
         }
       }
       console.log(

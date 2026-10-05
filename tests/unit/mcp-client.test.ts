@@ -9,6 +9,12 @@
  * - 网络错误（连接拒绝 / 超时中止）→ HubNotRunningError；
  * - probeHub 成功 / 超时（800ms）/ 拒绝连接 三态。
  *
+ * 阶段 5 push 升级：push(root, confirm, opts?) 三参（PushOptions 逐项透传、
+ * undefined 字段不出现在请求体），定型响应对齐 /v1/push 新形
+ * {ok, dryRun, pushed, skipped, items(=pushed+skipped 别名), backupDir?,
+ * baselineConflicts?, assetChanges?}——仅强制 ok/dryRun/pushed/skipped，可选
+ * 字段原样透传；缺 items 时客户端按 pushed+skipped 补算（向后兼容别名）。
+ *
  * 端口约束：stub 服务全部 listen(0) 由操作系统分配；"连接拒绝"场景用
  * listen(0) 抢占后立即释放的端口。绝不绑定真实 39995-39999。
  */
@@ -273,7 +279,7 @@ describe('HubClient：请求路径 / 方法 / body 契约', () => {
 
   it('deckPlan(opts) → POST /v1/deck/plan，body 就是 PlanOptions 本身', async () => {
     const stub = await startStub();
-    const opts = { savePath: 'p.json', rules: [{ mode: 'replace', from: 'a', to: 'b' }] };
+    const opts = { savePath: 'p.json', rules: [{ mode: 'exact' as const, from: 'a', to: 'b' }] };
     const client = new HubClient({ port: stub.port });
     await client.deckPlan(opts);
     const call = lastCall(stub);
@@ -302,15 +308,115 @@ describe('HubClient：请求路径 / 方法 / body 契约', () => {
     expect(JSON.parse(lastCall(stub).body) as unknown).toEqual({ root: 'D:\\pack' });
   });
 
-  it('push(root, true) → POST /v1/push，body {root, confirm:true}，定型返回 {ok, items}', async () => {
+  it('push(root, true) 无 opts → POST /v1/push，body 只有 {root, confirm:true}，定型返回新形', async () => {
     const stub = await startStub();
-    stub.reply = () => ({ json: { ok: true, items: 3 } });
+    stub.reply = () => ({ json: { ok: true, dryRun: true, pushed: 2, skipped: 1, items: 3 } });
     const client = new HubClient({ port: stub.port });
     const result = await client.push('D:\\pack', true);
     const call = lastCall(stub);
+    expect(call.method).toBe('POST');
     expect(call.url).toBe('/v1/push');
     expect(JSON.parse(call.body) as unknown).toEqual({ root: 'D:\\pack', confirm: true });
-    expect(result).toEqual({ ok: true, items: 3 });
+    expect(result).toEqual({ ok: true, dryRun: true, pushed: 2, skipped: 1, items: 3 });
+  });
+
+  it('push(root, true, opts) 全字段 → body 逐项透传（undefined 字段不出现）', async () => {
+    const stub = await startStub();
+    stub.reply = () => ({ json: { ok: true, dryRun: false, pushed: 1, skipped: 0, items: 1 } });
+    const client = new HubClient({ port: stub.port });
+    await client.push('D:\\pack', true, {
+      dryRun: false,
+      forceScriptsOnly: true,
+      skipBackup: true,
+      skipBaselineCheck: true,
+      backupRetention: 33,
+    });
+    expect(JSON.parse(lastCall(stub).body) as unknown).toEqual({
+      root: 'D:\\pack',
+      confirm: true,
+      dryRun: false,
+      forceScriptsOnly: true,
+      skipBackup: true,
+      skipBaselineCheck: true,
+      backupRetention: 33,
+    });
+  });
+
+  it('push(root, true, {dryRun}) 部分字段 → body 只带给定字段', async () => {
+    const stub = await startStub();
+    stub.reply = () => ({ json: { ok: true, dryRun: true, pushed: 0, skipped: 0, items: 0 } });
+    const client = new HubClient({ port: stub.port });
+    await client.push('r', true, { dryRun: true });
+    expect(JSON.parse(lastCall(stub).body) as unknown).toEqual({ root: 'r', confirm: true, dryRun: true });
+  });
+
+  it('push(root, true, {}) 空 opts → body 与无 opts 相同（{root, confirm:true}）', async () => {
+    const stub = await startStub();
+    stub.reply = () => ({ json: { ok: true, dryRun: true, pushed: 0, skipped: 0, items: 0 } });
+    const client = new HubClient({ port: stub.port });
+    await client.push('r', true, {});
+    expect(JSON.parse(lastCall(stub).body) as unknown).toEqual({ root: 'r', confirm: true });
+  });
+
+  it('push：响应缺 items → 客户端按 pushed + skipped 补算别名', async () => {
+    const stub = await startStub();
+    stub.reply = () => ({ json: { ok: true, dryRun: false, pushed: 4, skipped: 2 } });
+    const client = new HubClient({ port: stub.port });
+    const result = await client.push('r', true);
+    expect(result.items).toBe(6);
+  });
+
+  it('push：backupDir / baselineConflicts / assetChanges 原样透传，缺省不携带', async () => {
+    const stub = await startStub();
+    stub.reply = () => ({
+      json: {
+        ok: true,
+        dryRun: false,
+        pushed: 1,
+        skipped: 0,
+        items: 1,
+        backupDir: 'D:\\pack\\.tts\\backups\\t1',
+        baselineConflicts: [{ guid: 'aa11bb', name: '棋盘', kind: 'script' }],
+        assetChanges: { changed: ['decks/x/cards.csv'], added: [], deleted: [] },
+      },
+    });
+    const client = new HubClient({ port: stub.port });
+    const result = await client.push('r', true);
+    expect(result.backupDir).toBe('D:\\pack\\.tts\\backups\\t1');
+    expect(result.baselineConflicts).toEqual([{ guid: 'aa11bb', name: '棋盘', kind: 'script' }]);
+    expect(result.assetChanges).toEqual({ changed: ['decks/x/cards.csv'], added: [], deleted: [] });
+
+    const stub2 = await startStub();
+    stub2.reply = () => ({ json: { ok: true, dryRun: true, pushed: 0, skipped: 0, items: 0 } });
+    const result2 = await new HubClient({ port: stub2.port }).push('r', true);
+    expect(result2).not.toHaveProperty('backupDir');
+    expect(result2).not.toHaveProperty('baselineConflicts');
+    expect(result2).not.toHaveProperty('assetChanges');
+  });
+
+  it('push：dryRun 非布尔 / pushed 或 skipped 缺失 → HubError(HUB_UNKNOWN)（协议违规）', async () => {
+    const badBodies: unknown[] = [
+      { ok: true, pushed: 1, skipped: 0, items: 1 }, // 缺 dryRun
+      { ok: true, dryRun: true, skipped: 0, items: 0 }, // 缺 pushed
+      { ok: true, dryRun: true, pushed: 1, items: 1 }, // 缺 skipped
+      { dryRun: true, pushed: 1, skipped: 0, items: 1 }, // 缺 ok
+      { ok: true, dryRun: true, pushed: 1, skipped: 0, items: 1, extra: true }, // 多余字段仍放行
+    ];
+    const stub = await startStub();
+    const client = new HubClient({ port: stub.port });
+    for (const [i, bad] of badBodies.entries()) {
+      stub.reply = () => ({ json: bad });
+      const err = await client.push('r', true).catch((e: unknown) => e);
+      if (i === badBodies.length - 1) {
+        expect(err).not.toBeInstanceOf(HubError); // 多余字段不校验、放行
+      } else {
+        expect(err).toBeInstanceOf(HubError);
+        if (err instanceof HubError) {
+          expect(err.code).toBe('HUB_UNKNOWN');
+          expect(err.message).toContain('/v1/push');
+        }
+      }
+    }
   });
 
   it('shutdown() → POST /v1/hub/shutdown，返回 {ok:true}', async () => {

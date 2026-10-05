@@ -109,12 +109,47 @@ export interface HubOkResult {
   ok: true;
 }
 
-/** {@link HubClient.push} 的返回类型（POST /v1/push 的定型形状）。 */
+/**
+ * {@link HubClient.push} 的第 3 参（阶段 5 写入路径的 push 选项）。
+ *
+ * 字段与 src/hub/control.ts 的 /v1/push 请求体扩展字段一一对应（全部可选：
+ * 不带某字段时 hub 侧按各自缺省值处理——dryRun 缺省 false、backupRetention
+ * 缺省 20）；confirm 不在本接口里，它是 push 方法的第 2 参（字面量 true）。
+ */
+export interface PushOptions {
+  /** 试运行：只做检测与过滤、返回将推送什么，不备份不确认不发送不写基线。 */
+  dryRun?: boolean;
+  /** --force-scripts-only：素材有改动时仍强制只推脚本（用户自担风险）。 */
+  forceScriptsOnly?: boolean;
+  /** 跳过 push 前自动备份（不推荐）。 */
+  skipBackup?: boolean;
+  /** 跳过基线冲突检测（冲突照常记入结果）。 */
+  skipBaselineCheck?: boolean;
+  /** 备份保留份数（透传 hub 侧 createBackup 的 retention）。 */
+  backupRetention?: number;
+}
+
+/** {@link HubClient.push} 的返回类型（POST /v1/push 的定型形状，阶段 5 扩展）。 */
 export interface HubPushResult {
   /** 固定 true。 */
   ok: true;
-  /** 写回并重载的脚本条数（collectPushItems 收集的本地 scripts/ + ui/ 清单数）。 */
+  /** 是否试运行（与 hub 侧 pushSaveAndPlay 的 dryRun 一致）。 */
+  dryRun: boolean;
+  /** 实际写入（dryRun 下为"将写入"）的对象数。 */
+  pushed: number;
+  /** 无变化（含防御性跳过）而未发送的对象数。 */
+  skipped: number;
+  /**
+   * `pushed + skipped` 的别名（向后兼容字段）：hub 侧恒带，缺省时客户端按
+   * pushed + skipped 补算。
+   */
   items: number;
+  /** 备份目录完整路径；dryRun 或 skipBackup 时缺省。 */
+  backupDir?: string;
+  /** 基线冲突清单（检测到且被放行时携带；元素结构由 hub 侧 BaselineConflict 定义）。 */
+  baselineConflicts?: unknown[];
+  /** 素材改动清单（检测到且被放行时携带；结构由 hub 侧 AssetChanges 定义）。 */
+  assetChanges?: unknown;
 }
 
 // ---------------------------------------------------------------------------
@@ -511,27 +546,80 @@ export class HubClient {
   }
 
   /**
-   * POST /v1/push：写回并重载（本阶段 push 的唯一通路）。
+   * POST /v1/push：把本地工作区的脚本 / UI 改动安全地写回运行中的 TTS（阶段 5）。
    *
    * confirm 参数类型是字面量 `true`：调用方传 false（或漏传）编译期即报错，
-   * 与服务端 HUB_CONFIRM_REQUIRED 门双保险。不做 baseline hash / 备份目录 /
-   * 素材改动检测（阶段 5 的事）。
+   * 与服务端 HUB_CONFIRM_REQUIRED 门双保险。hub 侧的完整流水线（素材改动检测 →
+   * 基线冲突检测 → 备份 → 过滤 → saveAndPlay → 回读校验 → 更新基线）由
+   * src/hub/control.ts 的 handlePush 委托 pushSaveAndPlay 完成，本方法只负责
+   * 透传 {@link PushOptions} 与定型响应。
    * @param root 图包工作区根目录（绝对路径）
    * @param confirm 必须显式传 true（字面量类型约束）
-   * @returns 固定 `{ok:true, items:<写回条数>}`
+   * @param opts 可选 push 选项（dryRun / forceScriptsOnly / skipBackup /
+   *   skipBaselineCheck / backupRetention；不带某字段时 hub 侧按缺省值处理）
+   * @returns 定型结果（dryRun / pushed / skipped / items = pushed+skipped，
+   *   backupDir / baselineConflicts / assetChanges 仅在存在时携带）
    * @throws HubNotRunningError hub 不可达时
-   * @throws HubError hub 返回协议错误或响应 shape 不符时
+   * @throws HubError hub 返回协议错误或响应 shape 不符时（业务 PackError 以
+   *   HUB_PACK_ERROR 透传，details.packCode 携带业务错误码）
    */
-  async push(root: string, confirm: true): Promise<HubPushResult> {
-    const body = await this.request("POST", "/push", { root, confirm });
-    if (isPlainObject(body) && body.ok === true && typeof body.items === "number") {
-      return { ok: true, items: body.items };
+  async push(root: string, confirm: true, opts?: PushOptions): Promise<HubPushResult> {
+    const body: Record<string, unknown> = { root, confirm };
+    if (opts !== undefined) {
+      if (opts.dryRun !== undefined) {
+        body.dryRun = opts.dryRun;
+      }
+      if (opts.forceScriptsOnly !== undefined) {
+        body.forceScriptsOnly = opts.forceScriptsOnly;
+      }
+      if (opts.skipBackup !== undefined) {
+        body.skipBackup = opts.skipBackup;
+      }
+      if (opts.skipBaselineCheck !== undefined) {
+        body.skipBaselineCheck = opts.skipBaselineCheck;
+      }
+      if (opts.backupRetention !== undefined) {
+        body.backupRetention = opts.backupRetention;
+      }
+    }
+    const parsed = await this.request("POST", "/push", body);
+    if (
+      isPlainObject(parsed) &&
+      parsed.ok === true &&
+      typeof parsed.dryRun === "boolean" &&
+      typeof parsed.pushed === "number" &&
+      typeof parsed.skipped === "number"
+    ) {
+      const extra = parsed as {
+        backupDir?: unknown;
+        baselineConflicts?: unknown;
+        assetChanges?: unknown;
+        items?: unknown;
+      };
+      const result: HubPushResult = {
+        ok: true,
+        dryRun: parsed.dryRun,
+        pushed: parsed.pushed,
+        skipped: parsed.skipped,
+        items: typeof extra.items === "number" ? extra.items : parsed.pushed + parsed.skipped,
+      };
+      // 可选字段原样透传不校验（形状由 hub 侧 pushSaveAndPlay 保证）
+      if (extra.backupDir !== undefined && typeof extra.backupDir === "string") {
+        result.backupDir = extra.backupDir;
+      }
+      if (extra.baselineConflicts !== undefined && Array.isArray(extra.baselineConflicts)) {
+        result.baselineConflicts = extra.baselineConflicts;
+      }
+      if (extra.assetChanges !== undefined) {
+        result.assetChanges = extra.assetChanges;
+      }
+      return result;
     }
     throw new HubError(
       200,
       "HUB_UNKNOWN",
-      "/v1/push response is not the expected {ok:true,items:number} shape",
-      body,
+      "/v1/push response is not the expected {ok,dryRun,pushed,skipped} shape",
+      parsed,
     );
   }
 

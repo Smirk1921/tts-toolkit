@@ -112,6 +112,11 @@ function strictObjectError(label: string): (issue: z.core.$ZodRawIssue) => strin
  * - vcs             { lfs: 三选一 }，必填——约束 10，无默认值
  * - paths           { workdir: string }——workdir 缺省 "."
  * - upload          { prefix: string }——prefix 缺省 ""
+ * - push            { backup_retention, baseline_check }，可选——阶段 5 写入路径的
+ *                   push 子配置：backup_retention 备份保留数（整数 1~100，缺省 20）、
+ *                   baseline_check 基线冲突检测开关（缺省 true）。整个节点缺省
+ *                   （pack.yaml 不写 push）即视为 { backup_retention: 20, baseline_check: true }，
+ *                   向后兼容旧清单；init 的初始模板不需要包含它
  *
  * 严格模式用 z.strictObject（zod 4 写法），与 object(...).strict() 校验行为完全一致。
  */
@@ -149,6 +154,20 @@ export const packYamlSchema = z.strictObject(
     upload: z.strictObject(
       { prefix: z.string({ error: "upload.prefix 必须是字符串" }).default("") },
       { error: strictObjectError("upload") },
+    ),
+    push: z.optional(
+      z.strictObject(
+        {
+          backup_retention: z
+            .number({ error: "push.backup_retention 必须是数字" })
+            .int({ error: "push.backup_retention 必须是整数" })
+            .min(1, { error: "push.backup_retention 不能小于 1" })
+            .max(100, { error: "push.backup_retention 不能大于 100" })
+            .default(20),
+          baseline_check: z.boolean({ error: "push.baseline_check 必须是布尔值" }).default(true),
+        },
+        { error: strictObjectError("push") },
+      ),
     ),
   },
   { error: strictObjectError("pack.yaml") },
@@ -217,7 +236,8 @@ export function packYamlPath(root: string): string {
  * 读取并校验图包清单。
  *
  * @param root 图包工作区根目录
- * @returns 校验通过、默认值已填充（host / paths.workdir / upload.prefix）的图包元数据
+ * @returns 校验通过、默认值已填充（host / paths.workdir / upload.prefix；push 节点
+ *          出现时填充 backup_retention / baseline_check，节点缺省时保持 undefined）的图包元数据
  * @throws PackError code="PACK_NOT_FOUND" 清单文件不存在时
  * @throws PackError code="PACK_INVALID" 内容不是合法 YAML，或不符合 schema 时（message 含问题摘要）
  * @throws PackError code="PACK_READ_FAILED" 读取时发生其他 IO 错误时

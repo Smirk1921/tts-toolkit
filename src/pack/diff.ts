@@ -6,7 +6,9 @@
  * - 校验工作区（{@link readPackYaml}）；
  * - 连接 TTS 取游戏侧脚本快照（{@link withEditorServer} → SessionScripts.getScripts）；
  * - 扫描本地 scripts/ 与 ui/ 目录（命名规则见 src/pack/layout.ts）；
- * - 按 guid + kind 比较两侧内容，产出 {@link DiffResult}。
+ * - 按 guid + kind 比较两侧内容，产出 {@link DiffResult}；
+ * - `includeHunks` 为 true 时为 modified 条目计算逐行 unified diff hunks
+ *   （{@link computeHunks}）。
  *
  * 状态语义（方向以「游戏侧相对本地工作区」为准，与任务约定一致）：
  *
@@ -24,6 +26,17 @@
  *   编辑器换行风格与结尾空行差异不算 modified；
  * - 游戏侧字段缺省（script / ui 为 undefined）视为「游戏侧没有」：本地有文件即
  *   deleted（与 TTS 协议「缺省即删除」的语义一致），本地也没有则不产生条目。
+ *
+ * 逐行差异（阶段 5 扩展，unified diff）：
+ * - `DiffOptions.includeHunks` 为 true 时，modified 条目额外携带 `hunks`
+ *   （{@link DiffHunk} 列表）：按 LCS 行对齐把两侧文本切成若干差异块，每块给出
+ *   两侧起始行号（1 基）与该块的行内容（含前后各 3 行上下文，同 GNU diff -U3）；
+ * - 方向约定：localLines 是本地工作区的行，remoteLines 是游戏侧（远端）的行；
+ * - 算法：Hirschberg 分治 LCS（时间 O(n·m)、空间 O(n+m)），不引入 npm 依赖，
+ *   见 {@link computeHunks}；平局取第一个最大分叉点，同一输入结果完全确定；
+ * - 保护：归一化后任一侧超过 5000 行则跳过（hunks 字段缺省），避免超大文件的
+ *   O(n·m) 耗时；added / deleted 不算 hunks（整文件新增 / 删除，无需逐行）；
+ * - 间隔不超过 6 行（2×上下文）的相邻改动合并为一个 hunk，减少碎片。
  *
  * 本地索引规则（与 build.ts / pull.ts 的落盘命名约定保持一致）：
  * - 只收 scripts/ 下的 `.lua` 与 ui/ 下的 `.xml` 普通文件；
@@ -60,6 +73,8 @@
  * 原样输出键名）：
  * - `error.pack.diff.scanFailed` {path} {detail}
  * - `error.pack.diff.readFailed` {path} {detail}
+ *
+ * 阶段 5 的逐行 hunks 扩展不产生新的用户可见文案，未新增 i18n 键。
  */
 
 import { readFile, readdir } from "node:fs/promises";
@@ -75,6 +90,25 @@ import { PackError, readPackYaml } from "./packyaml.js";
 // ---------------------------------------------------------------------------
 // 公开类型
 // ---------------------------------------------------------------------------
+
+/**
+ * 一个逐行差异块（unified diff 的 hunk）。
+ *
+ * 由同一次 LCS 行对齐切出：块内两侧的上下文行内容一致，变动行按方向分列在
+ * localLines / remoteLines 中。仅当 status === "modified" 且
+ * DiffOptions.includeHunks 为 true 时由 {@link diffWorkspace} 填充到
+ * {@link DiffEntry.hunks}；added / deleted 不产生 hunks（整文件新增 / 删除）。
+ */
+export interface DiffHunk {
+  /** 本地起始行号（1 基；纯新增块本地无行时取插入点之后的行号） */
+  localStart: number;
+  /** 本地行（含上下文与变动；纯新增块为空数组） */
+  localLines: string[];
+  /** 远端（游戏侧）起始行号（1 基；纯删除块远端无行时取插入点之后的行号） */
+  remoteStart: number;
+  /** 远端行（含上下文与变动；纯删除块为空数组） */
+  remoteLines: string[];
+}
 
 /**
  * 一条差异。
@@ -98,6 +132,12 @@ export interface DiffEntry {
   status: "added" | "modified" | "deleted";
   /** 本地对应文件的绝对路径；仅当本地存在该文件（modified / deleted）时携带 */
   localPath?: string;
+  /**
+   * 逐行差异（unified diff hunks，见 {@link DiffHunk}）。
+   * 仅 status === "modified" 且 opts.includeHunks 为 true 时填充；
+   * 归一化后任一侧超过 5000 行时省 CPU 跳过（字段缺省）。
+   */
+  hunks?: DiffHunk[];
 }
 
 /** diffWorkspace 的返回结果 */
@@ -125,6 +165,11 @@ export interface DiffOptions {
    * daemon.server（hub 已持有 39998），避免二次独占触发 PortInUseError。
    */
   server?: import("../protocol/editor-server.js").EditorServer;
+  /**
+   * 是否为 modified 条目计算逐行 hunks（默认 false，省 CPU）。
+   * 结果写入 {@link DiffEntry.hunks}；added / deleted 条目不受影响。
+   */
+  includeHunks?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -266,10 +311,13 @@ function nameFromFileName(fileName: string, ext: ".lua" | ".xml"): string {
  * 目的：编辑器 / 平台的换行风格差异（CRLF vs LF）与结尾空行差异不应被
  * 报成 modified；行内空白与大小写保持原样，绝不做更"聪明"的等价判断。
  *
+ * 阶段 5 起导出：baseline / push 等模块需要与 diff 相同的归一化语义时直接
+ * 复用本函数，禁止再复制实现（此前 src/safety/baseline.ts 持有一份私有副本）。
+ *
  * @param text 原始内容
  * @returns 归一化后的内容（仅用于比较，不落盘）
  */
-function normalizeContent(text: string): string {
+export function normalizeContent(text: string): string {
   return text.replace(/\r\n?/g, "\n").trimEnd();
 }
 
@@ -357,6 +405,7 @@ function pickName(game: ScriptState | undefined, local: LocalFile | undefined, g
  * @param game 游戏侧脚本状态（GUID 不存在于游戏侧时 undefined）
  * @param gameText 游戏侧该 kind 的内容（字段缺省时 undefined）
  * @param local 本地该 kind 的文件
+ * @param includeHunks 是否为 modified 条目计算逐行 hunks（见 {@link DiffOptions.includeHunks}）
  * @returns 差异条目；无差异时返回 undefined
  */
 function compareOne(
@@ -365,14 +414,26 @@ function compareOne(
   game: ScriptState | undefined,
   gameText: string | undefined,
   local: LocalFile | undefined,
+  includeHunks: boolean,
 ): DiffEntry | undefined {
   const name = pickName(game, local, guid);
 
   if (gameText !== undefined && local !== undefined) {
-    if (normalizeContent(gameText) === normalizeContent(local.content)) {
+    const normalizedGame = normalizeContent(gameText);
+    const normalizedLocal = normalizeContent(local.content);
+    if (normalizedGame === normalizedLocal) {
       return undefined; // 两边一致：不计入
     }
-    return { guid, name, kind, status: "modified", localPath: local.filePath };
+    const entry: DiffEntry = { guid, name, kind, status: "modified", localPath: local.filePath };
+    // 逐行 hunks：仅显式要求时计算；归一化后任一侧超行数上限则跳过（O(n·m) 保护）
+    if (
+      includeHunks &&
+      splitLines(normalizedLocal).length <= HUNK_MAX_LINES &&
+      splitLines(normalizedGame).length <= HUNK_MAX_LINES
+    ) {
+      entry.hunks = computeHunks(normalizedLocal, normalizedGame);
+    }
+    return entry;
   }
   if (gameText !== undefined) {
     return { guid, name, kind, status: "added" }; // 游戏有本地无
@@ -381,6 +442,313 @@ function compareOne(
     return { guid, name, kind, status: "deleted", localPath: local.filePath }; // 本地有游戏无
   }
   return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// 逐行 unified diff（LCS / Hirschberg 分治，阶段 5 扩展）
+// ---------------------------------------------------------------------------
+
+/** hunk 前后携带的上下文行数（与 GNU diff -U3 一致） */
+const HUNK_CONTEXT = 3;
+
+/** 计算 hunks 的行数上限：归一化后任一侧超过该行数即跳过（O(n·m) 耗时保护） */
+const HUNK_MAX_LINES = 5000;
+
+/** LCS 对齐产生的行编辑操作（keep 两侧都有 / del 仅本地 / add 仅远端） */
+type DiffOp =
+  | { type: "keep"; localIdx: number; remoteIdx: number }
+  | { type: "del"; localIdx: number }
+  | { type: "add"; remoteIdx: number };
+
+/**
+ * 把文本切成行数组（\n 为行分隔符，末行可不带换行）。
+ *
+ * 空文本 → 0 行；以 "\n" 结尾的文本，末尾空串是行终止符不是新的一行
+ * （"a\n" 是 1 行，"a\n\n" 是 2 行且第二行为空行）。
+ *
+ * @param text 文本（调用方应先经 {@link normalizeContent} 归一化）
+ * @returns 行内容数组（不含行尾换行符）
+ */
+function splitLines(text: string): string[] {
+  if (text === "") {
+    return [];
+  }
+  const lines = text.split("\n");
+  if (lines[lines.length - 1] === "") {
+    lines.pop();
+  }
+  return lines;
+}
+
+/**
+ * 把两侧行统一编号为整数（相同内容 → 相同 id，两侧共用一张编号表），
+ * 让 LCS 内层循环做整数比较而不是字符串比较（5000 行级别输入下显著省时）。
+ *
+ * @param linesA 本地行
+ * @param linesB 远端行
+ * @returns [本地 id 序列, 远端 id 序列]，跨侧可比
+ */
+function internLineIds(linesA: readonly string[], linesB: readonly string[]): [number[], number[]] {
+  const table = new Map<string, number>();
+  const toIds = (lines: readonly string[]): number[] =>
+    lines.map((line) => {
+      let id = table.get(line);
+      if (id === undefined) {
+        id = table.size;
+        table.set(line, id);
+      }
+      return id;
+    });
+  return [toIds(linesA), toIds(linesB)];
+}
+
+/**
+ * 计算单条长度行：row[j] = LCS(a, b[0..j))（j: 0..b.length），滚动数组只留两行。
+ * @param a id 序列（行维）
+ * @param b id 序列（列维）
+ * @returns 长度 b.length + 1 的行
+ */
+function lcsRow(a: readonly number[], b: readonly number[]): Uint32Array {
+  const m = b.length;
+  let prev = new Uint32Array(m + 1);
+  let curr = new Uint32Array(m + 1);
+  for (const ai of a) {
+    for (let j = 1; j <= m; j++) {
+      curr[j] = ai === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], curr[j - 1]);
+    }
+    const swap = prev;
+    prev = curr;
+    curr = swap;
+  }
+  return prev;
+}
+
+/**
+ * Hirschberg 分治求一个 LCS 匹配对列表：时间 O(n·m)、空间 O(n+m)
+ * （每层只有两条长度行，避免 5000 行级别输入构造 n×m 全表）。
+ *
+ * 平局取第一个最大分叉点，同一输入的输出完全确定（可复现的 diff）。
+ *
+ * @param a id 序列（本地侧）
+ * @param b id 序列（远端侧）
+ * @returns 匹配对 [localIdx, remoteIdx] 列表，两维分别严格递增
+ */
+function lcsMatches(a: readonly number[], b: readonly number[]): Array<[number, number]> {
+  const n = a.length;
+  const m = b.length;
+  if (n === 0 || m === 0) {
+    return [];
+  }
+  if (n === 1) {
+    const j = b.indexOf(a[0]);
+    return j >= 0 ? [[0, j]] : [];
+  }
+  const mid = n >> 1;
+  const forward = lcsRow(a.slice(0, mid), b); // forward[j] = LCS(a[0..mid), b[0..j))
+  // 反向长度行：LCS(a[mid..n), b[j..m)) = lcsRow(反转右半, 反转 b)[m - j]
+  const backward = lcsRow(a.slice(mid).reverse(), b.slice().reverse());
+  let splitAt = 0;
+  let best = -1;
+  for (let j = 0; j <= m; j++) {
+    const score = forward[j] + backward[m - j];
+    if (score > best) {
+      best = score;
+      splitAt = j;
+    }
+  }
+  return [
+    ...lcsMatches(a.slice(0, mid), b.slice(0, splitAt)),
+    ...lcsMatches(a.slice(mid), b.slice(splitAt)).map(
+      ([li, rj]) => [li + mid, rj + splitAt] as [number, number],
+    ),
+  ];
+}
+
+/**
+ * 由匹配对列表构造编辑操作序列：两处 keep 之间同时有 del 与 add 时 del 在前
+ * （与 GNU diff 的 -/+ 顺序一致）。
+ *
+ * @param localIds 本地 id 序列
+ * @param remoteIds 远端 id 序列
+ * @returns 操作序列（keep/del/add 按行序排列）
+ */
+function buildOps(localIds: readonly number[], remoteIds: readonly number[]): DiffOp[] {
+  const ops: DiffOp[] = [];
+  let i = 0;
+  let j = 0;
+  for (const [mi, rj] of lcsMatches(localIds, remoteIds)) {
+    while (i < mi) {
+      ops.push({ type: "del", localIdx: i });
+      i += 1;
+    }
+    while (j < rj) {
+      ops.push({ type: "add", remoteIdx: j });
+      j += 1;
+    }
+    ops.push({ type: "keep", localIdx: mi, remoteIdx: rj });
+    i = mi + 1;
+    j = rj + 1;
+  }
+  while (i < localIds.length) {
+    ops.push({ type: "del", localIdx: i });
+    i += 1;
+  }
+  while (j < remoteIds.length) {
+    ops.push({ type: "add", remoteIdx: j });
+    j += 1;
+  }
+  return ops;
+}
+
+/**
+ * 找出全部改动区间（连续非 keep 的 op 段，闭区间），并把间隔不超过
+ * 2×上下文行数的相邻区间合并为同一 hunk（上下文扩展会相接，分开展示只产生碎片）。
+ *
+ * @param ops 编辑操作序列
+ * @returns 区间列表 [startOp, endOp]，不重叠、递增
+ */
+function changeRegions(ops: readonly DiffOp[]): Array<[number, number]> {
+  const regions: Array<[number, number]> = [];
+  let start = -1;
+  for (let idx = 0; idx < ops.length; idx++) {
+    if (ops[idx].type === "keep") {
+      if (start >= 0) {
+        regions.push([start, idx - 1]);
+        start = -1;
+      }
+    } else if (start < 0) {
+      start = idx;
+    }
+  }
+  if (start >= 0) {
+    regions.push([start, ops.length - 1]);
+  }
+  // 间隔 = 两区间之间夹着的 keep 行数；<= 2*HUNK_CONTEXT 时上下文相接 → 合并
+  const merged: Array<[number, number]> = [];
+  for (const region of regions) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined) {
+      let keeps = 0;
+      for (let idx = last[1] + 1; idx < region[0]; idx++) {
+        if (ops[idx].type === "keep") {
+          keeps += 1;
+        }
+      }
+      if (keeps <= HUNK_CONTEXT * 2) {
+        last[1] = region[1];
+        continue;
+      }
+    }
+    merged.push([region[0], region[1]]);
+  }
+  return merged;
+}
+
+/**
+ * 由编辑操作序列构造 hunk 列表：每个改动区间向两侧各扩最多
+ * {@link HUNK_CONTEXT} 行 keep 上下文，再按 op 的两侧归属拆出各自的行内容。
+ *
+ * 起始行号取块内第一个消费该侧行的 op；纯新增 / 纯删除块该侧无行，
+ * 取插入点之后（即已消费行数 + 1，1 基）。
+ *
+ * @param ops 编辑操作序列
+ * @param localLines 本地行（下标对应 del / keep 的 localIdx）
+ * @param remoteLines 远端行（下标对应 add / keep 的 remoteIdx）
+ * @returns hunks（两侧完全一致时为空数组）
+ */
+function buildHunks(
+  ops: readonly DiffOp[],
+  localLines: readonly string[],
+  remoteLines: readonly string[],
+): DiffHunk[] {
+  const hunks: DiffHunk[] = [];
+  for (const [regionStart, regionEnd] of changeRegions(ops)) {
+    // 上下文扩展：区间边界向外各收最多 HUNK_CONTEXT 行 keep
+    //（相邻区间间隔 > 2*HUNK_CONTEXT 才未合并，扩展不可能触及下一改动）
+    let start = regionStart;
+    for (let kept = 0; kept < HUNK_CONTEXT && start > 0 && ops[start - 1].type === "keep"; kept++) {
+      start -= 1;
+    }
+    let end = regionEnd;
+    for (
+      let kept = 0;
+      kept < HUNK_CONTEXT && end + 1 < ops.length && ops[end + 1].type === "keep";
+      kept++
+    ) {
+      end += 1;
+    }
+
+    let localBefore = 0; // start 之前已消费的本地行数（纯新增块的起点兜底）
+    let remoteBefore = 0;
+    for (let idx = 0; idx < start; idx++) {
+      if (ops[idx].type !== "add") {
+        localBefore += 1;
+      }
+      if (ops[idx].type !== "del") {
+        remoteBefore += 1;
+      }
+    }
+
+    const hunkLocal: string[] = [];
+    const hunkRemote: string[] = [];
+    let localStart = -1;
+    let remoteStart = -1;
+    for (let idx = start; idx <= end; idx++) {
+      const op = ops[idx];
+      if (op.type === "keep") {
+        if (localStart < 0) {
+          localStart = op.localIdx + 1;
+        }
+        if (remoteStart < 0) {
+          remoteStart = op.remoteIdx + 1;
+        }
+        hunkLocal.push(localLines[op.localIdx]);
+        hunkRemote.push(remoteLines[op.remoteIdx]);
+      } else if (op.type === "del") {
+        if (localStart < 0) {
+          localStart = op.localIdx + 1;
+        }
+        hunkLocal.push(localLines[op.localIdx]);
+      } else {
+        if (remoteStart < 0) {
+          remoteStart = op.remoteIdx + 1;
+        }
+        hunkRemote.push(remoteLines[op.remoteIdx]);
+      }
+    }
+    if (localStart < 0) {
+      localStart = localBefore + 1; // 纯新增块：本地无行，取插入点之后的行号（1 基）
+    }
+    if (remoteStart < 0) {
+      remoteStart = remoteBefore + 1;
+    }
+    hunks.push({ localStart, localLines: hunkLocal, remoteStart, remoteLines: hunkRemote });
+  }
+  return hunks;
+}
+
+/**
+ * 计算两段文本的逐行 unified diff hunks（{@link DiffHunk} 列表）。
+ *
+ * 输入应为已归一化（{@link normalizeContent}）的文本：本函数只负责切行与对齐，
+ * 不做换行风格 / 结尾空白归一化。两侧完全一致时返回 []。
+ *
+ * 复杂度：时间 O(n·m)、空间 O(n+m)（Hirschberg 分治，见 {@link lcsMatches}）。
+ * 行数上千时调用方应自行评估耗时——diffWorkspace 对归一化后任一侧超过
+ * 5000 行的输入直接跳过 hunks（字段缺省）。
+ *
+ * @param localText 本地文本
+ * @param remoteText 远端（游戏侧）文本
+ * @returns hunks，按出现顺序排列；上下文行数固定 {@link HUNK_CONTEXT}
+ */
+export function computeHunks(localText: string, remoteText: string): DiffHunk[] {
+  const localLines = splitLines(localText);
+  const remoteLines = splitLines(remoteText);
+  if (localLines.length === 0 && remoteLines.length === 0) {
+    return [];
+  }
+  const [localIds, remoteIds] = internLineIds(localLines, remoteLines);
+  return buildHunks(buildOps(localIds, remoteIds), localLines, remoteLines);
 }
 
 // ---------------------------------------------------------------------------
@@ -399,7 +767,8 @@ function compareOne(
  *
  * 先校验 pack.yaml 再连 TTS：非图包目录立刻失败，不占用 39998 端口。
  *
- * @param opts 入参（root 必填；timeoutMs 为等待 TTS 回推的超时，缺省 30 秒）
+ * @param opts 入参（root 必填；timeoutMs 为等待 TTS 回推的超时，缺省 30 秒；
+ *   includeHunks 为 true 时 modified 条目附带逐行 hunks，缺省 false）
  * @returns 差异结果（entries 排序规则见模块头注释；计数为条目数）
  * @throws Error `opts.root` 不是非空字符串，或 `timeoutMs` 不是正有限数字时
  *   （调用方编程错误，文案为中文硬编码，与 build.ts 的入参校验风格一致）
@@ -459,7 +828,7 @@ export async function diffWorkspace(opts: DiffOptions): Promise<DiffResult> {
     for (const kind of ["script", "ui"] as const) {
       const gameText = game === undefined ? undefined : kind === "script" ? game.script : game.ui;
       const local = (kind === "script" ? localScripts : localUi).get(guid);
-      const entry = compareOne(guid, kind, game, gameText, local);
+      const entry = compareOne(guid, kind, game, gameText, local, opts.includeHunks === true);
       if (entry === undefined) {
         continue;
       }

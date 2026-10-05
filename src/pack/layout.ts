@@ -5,7 +5,8 @@
  * 职责：
  * - 定义图包工作区的标准目录布局与布局版本号（{@link PACK_DIRS} / {@link PACK_LAYOUT_VERSION}）；
  * - 幂等初始化目录结构（{@link ensureLayout}），并放置 .tts/.gitkeep 占位文件；
- * - 提供各子目录与骨架存档的路径换算（scriptsDir / uiDir / decksDir / objectsDir / skeletonPath）；
+ * - 提供各子目录与骨架存档 / 基线文件的路径换算
+ *   （scriptsDir / uiDir / decksDir / objectsDir / skeletonPath / baselinePath）；
  * - 提供脚本 / UI 文件命名规则（{@link scriptFileName} / {@link uiFileName}），
  *   与 `tts pull`（src/cli/commands/pull.ts）的落盘命名保持一致。
  *
@@ -23,6 +24,7 @@
  *   .tts/            工具内部状态（不作为图包内容对外发布）
  *     .gitkeep       空占位文件——git 不跟踪空目录，靠它保证 .tts/ 骨架入库
  *     skeleton.json  骨架存档（约束 8：绝不入 git，由图包 .gitignore 排除；本模块不写）
+ *     baseline.json  基线 hash（阶段 5 写入路径；由 safety/baseline.ts 读写，本模块只提供路径）
  *     backups/       备份
  *     cache/         缓存
  * ```
@@ -98,6 +100,9 @@ const GITKEEP_NAME = ".gitkeep";
 
 /** 骨架存档文件名（约束 8：绝不入 git，由图包 .gitignore 排除） */
 const SKELETON_FILE = "skeleton.json";
+
+/** baseline.json 文件名（位于 .tts/ 下；由 safety/baseline.ts 读写） */
+const BASELINE_FILE = "baseline.json";
 
 // ---------------------------------------------------------------------------
 // 文件名净化（从 src/cli/commands/pull.ts 复制，保持逐字一致）
@@ -242,6 +247,22 @@ export function objectsDir(root: string): string {
  */
 export function skeletonPath(root: string): string {
   return path.join(assertRoot(root), DIR_TTS, SKELETON_FILE);
+}
+
+/**
+ * 返回 baseline.json 的完整路径（`<root>/.tts/baseline.json`）。
+ * 与 {@link skeletonPath} 同级，供 safety/baseline.ts 使用。
+ *
+ * baseline.json 是阶段 5 写入路径的基线 hash（pull / push 成功后写入，push 前
+ * 冲突检测读取），与骨架存档同属工具内部状态：图包 .gitignore 必须排除它
+ * （src/pack/init.ts 已写入），本模块只提供路径、不负责读写。
+ *
+ * @param root - 图包根目录（原样拼接，不做 resolve）
+ * @returns `<root>/.tts/baseline.json`
+ * @throws root 不是非空字符串时抛出中文错误
+ */
+export function baselinePath(root: string): string {
+  return path.join(assertRoot(root), DIR_TTS, BASELINE_FILE);
 }
 
 // ---------------------------------------------------------------------------

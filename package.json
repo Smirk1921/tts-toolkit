@@ -15,6 +15,7 @@
     "test:integration": "vitest run tests/integration"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.3.0",
     "@tts-tools/cli": "^2.3.0",
     "@tts-tools/savefile": "^2.4.0",
     "commander": "^15.0.0",

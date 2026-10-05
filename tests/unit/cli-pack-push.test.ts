@@ -24,7 +24,7 @@
  *   模式；hub 离线 → pushSaveAndPlay 独立执行 + PackError / 未知错误出口；
  * - 确认门回调的可达性：当前旗标决策（实写必带 --yes）下回调恒直接放行且
  *   confirmPush 不被调用（防御性闸门的兜底语义按任务书锁定）；
- * - diff --unified：includeHunks 透传、hunks 的 `@@ -<localStart>,+<localLines.length> @@`
+ * - diff --unified：includeHunks 透传、hunks 的 `@@ -<localStart>,<localLines.length> +<remoteStart>,<remoteLines.length> @@`
  *   渲染与 -/+ 行前缀、无 hunks 条目静默跳过。
  */
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
@@ -339,7 +339,7 @@ describe('pack diff · --unified', () => {
     expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining('@@'));
   });
 
-  it('--unified：diffWorkspace 收到 includeHunks:true，hunks 按 @@ -localStart,+localLines.length @@ 渲染，- 为本地行 + 为游戏侧行', async () => {
+  it('--unified：diffWorkspace 收到 includeHunks:true，hunks 按 @@ -localStart,localLines.length +remoteStart,remoteLines.length @@ 渲染，- 为本地行 + 为游戏侧行', async () => {
     diffWorkspaceMock.mockResolvedValue(
       diffResult(
         [
@@ -361,7 +361,7 @@ describe('pack diff · --unified', () => {
 
     expect(diffWorkspaceMock).toHaveBeenCalledWith({ root: 'D:\\pack', includeHunks: true });
     const logged = logSpy.mock.calls.map((call) => call.join(' '));
-    expect(logged).toContain('  @@ -2,+2 @@');
+    expect(logged).toContain('  @@ -2,2 +2,2 @@');
     expect(logged).toContain('    - ctx');
     expect(logged).toContain('    - local-new');
     expect(logged).toContain('    + ctx');

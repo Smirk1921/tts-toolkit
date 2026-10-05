@@ -318,7 +318,7 @@ function formatPushItem(item: PushItem): string {
 function formatHunkLines(hunks: readonly DiffHunk[] | undefined): string[] {
   const lines: string[] = [];
   for (const hunk of hunks ?? []) {
-    lines.push(`  @@ -${hunk.localStart},+${hunk.localLines.length} @@`);
+    lines.push(`  @@ -${hunk.localStart},${hunk.localLines.length} +${hunk.remoteStart},${hunk.remoteLines.length} @@`);
     for (const line of hunk.localLines) {
       lines.push(`    - ${line}`);
     }

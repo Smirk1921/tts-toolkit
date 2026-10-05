@@ -25,6 +25,7 @@ import { deckCommand } from "./commands/deck.js";
 import { execCommand } from "./commands/exec.js";
 import { fetchCommand } from "./commands/fetch.js";
 import { hostCommand } from "./commands/host.js";
+import { hubCommand } from "./commands/hub.js";
 import { importCommand } from "./commands/import.js";
 import { migrateCommand } from "./commands/migrate.js";
 import { packCommand } from "./commands/pack.js";
@@ -182,6 +183,7 @@ program.addCommand(hostCommand);
 program.addCommand(fetchCommand);
 program.addCommand(migrateCommand);
 program.addCommand(reviewCommand);
+program.addCommand(hubCommand);
 localizeCommandTree(program);
 
 /**

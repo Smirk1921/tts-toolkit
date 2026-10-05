@@ -3,7 +3,9 @@
   "version": "0.1.0",
   "type": "module",
   "bin": {
-    "tts": "./dist/cli/index.js"
+    "tts": "./dist/cli/index.js",
+    "tts-hub": "./dist/cli/hub-main.js",
+    "tts-mcp": "./dist/mcp/main.js"
   },
   "engines": {
     "node": ">=24.19.0"

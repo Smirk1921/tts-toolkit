@@ -390,6 +390,40 @@
       },
       "hub": {
         "description": "Start the hub daemon: owns the editor port and serves TCP/WS fanout plus a loopback-only control channel (for CLI delegation and MCP)"
+      },
+      "build": {
+        "description": "Build the pack workspace into a TTS save JSON and export the Workshop BSON payload",
+        "option": {
+          "out": "Output BSON path (required)",
+          "root": "Workspace root directory",
+          "dryRun": "Print the summary only; write no files and no manual-upload guide"
+        }
+      },
+      "publish": {
+        "description": "Publish the BSON payload to the Steam Workshop (manual guide / kpsteam auto-upload / metadata check)",
+        "option": {
+          "item": "Workshop item id (required for publish / update)",
+          "auto": "Try to auto-upload with kpsteam (by default only the manual guide is printed)",
+          "root": "Workspace root directory (used to derive the default BSON path)",
+          "bson": "BSON payload path (default <root>/dist/<pack name>.bson)",
+          "manualGuide": "Only generate and print the manual-upload guide",
+          "check": "Fetch and print the public metadata of a Workshop item"
+        }
+      },
+      "test": {
+        "description": "Run Lua tests inside TTS (from the pack workspace tests/ directory)",
+        "argument": {
+          "path": "Test file or directory (default <root>/tests)"
+        },
+        "option": {
+          "root": "Pack workspace root (defaults to the current directory)",
+          "target": "Target object guid (default -1 = Global)",
+          "timeout": "Per-file timeout in milliseconds (default 30000)",
+          "json": "Write the JSON report to the given path",
+          "bail": "Stop after the first failing file",
+          "bundle": "Bundle multi-file tests with luabundle (disable with --no-bundle)",
+          "verbose": "Show print() output from the tests"
+        }
       }
     },
     "error": {
@@ -755,6 +789,70 @@
       },
       "started": "Hub started: control channel http://127.0.0.1:{controlPort}/v1; editor port {editorPort}; TCP fanout {tcpPort}; WS fanout {wsPort} (Ctrl+C to stop)",
       "stopped": "Hub stopped"
+    },
+    "build": {
+      "description": "Build the pack workspace into a TTS save JSON and export the Workshop BSON payload",
+      "dryRun": "dry-run: would write JSON {jsonPath} and BSON {bsonPath}; replaces {scripts} script / {ui} UI / {objects} object entries (no file written)",
+      "dryRunNote": "Note: dry-run writes no files and generates no manual-upload guide; drop --dry-run to actually produce the BSON payload.",
+      "jsonDone": "Save JSON written: {jsonPath} (replaces {scripts} script / {ui} UI / {objects} object entries)",
+      "bsonDone": "BSON payload written: {bsonPath} ({bytes} bytes)",
+      "verifyOk": "BSON self-check passed: little-endian length of the first 4 bytes == file size ({bytes} bytes)",
+      "clipboardOk": "BSON path copied to the clipboard: {path}",
+      "clipboardFail": "Failed to copy the BSON path to the clipboard ({error}); please copy the path above manually."
+    },
+    "publish": {
+      "description": "Publish the BSON payload to the Steam Workshop (manual guide / kpsteam auto-upload / metadata check)",
+      "check": {
+        "done": "Public metadata of Workshop item {itemId}:"
+      },
+      "kpsteamHint": "kpsteam {version} detected (use --auto to upload automatically; this tool never launches Steam / TTS itself)",
+      "uploading": "Uploading the payload of item {itemId} with kpsteam: {bsonPath}",
+      "kpsteamOutput": "kpsteam output (raw stdout / stderr):",
+      "uploadOk": "kpsteam upload finished; hard rule: this tool only invokes the kpsteam subprocess and never launches Steam / TTS.",
+      "verifyUpdated": "time_updated is now {timeUpdated} after the upload (confirmed on polling attempt {attempts})",
+      "verifyNotUpdated": "time_updated did not change within {attempts} polls (the upload itself succeeded; check the Workshop page later)",
+      "verifySkipped": "Skipped the time_updated verification: no pre-upload baseline was available, so no conclusion is guessed.",
+      "clipboardOk": "BSON path copied to the clipboard: {path}",
+      "clipboardFail": "Failed to copy the BSON path to the clipboard ({error}); please copy the path above manually."
+    },
+    "test": {
+      "description": "Run Lua tests inside TTS (from the pack workspace tests/ directory)",
+      "option_root": "Pack workspace root (defaults to the current directory)",
+      "option_target": "Target object guid (default -1 = Global)",
+      "option_timeout": "Per-file timeout in milliseconds (default 30000)",
+      "option_json": "Write the JSON report to the given path",
+      "option_bail": "Stop after the first failing file",
+      "option_bundle": "Bundle multi-file tests with luabundle (disable with --no-bundle)",
+      "option_verbose": "Show print() output from the tests",
+      "no_tests_found": "No test files found under {root} (tests/**/*.test.lua is scanned by default; adjust pack.yaml tests.include to change that)",
+      "summary": "Summary: passed {passed} / failed {failed} / errored {errored}",
+      "failed": "{failed} test case(s) failed",
+      "errored": "{errored} test case(s) raised an error",
+      "bailed": "Stopped early (--bail: no further files after a failure)",
+      "report_written": "JSON report written: {path}",
+      "hub_delegated": "Delegated the test run to the hub (127.0.0.1:{port})",
+      "standalone": "Hub is not running: standalone mode connects to the editor port directly",
+      "run_start": "Running {count} test file(s)…",
+      "option": {
+        "root": "Pack workspace root (defaults to the current directory)",
+        "target": "Target object guid (default -1 = Global)",
+        "timeout": "Per-file timeout in milliseconds (default 30000)",
+        "json": "Write the JSON report to the given path",
+        "bail": "Stop after the first failing file",
+        "bundle": "Bundle multi-file tests with luabundle (disable with --no-bundle)",
+        "verbose": "Show print() output from the tests"
+      },
+      "argument": {
+        "path": "Test file or directory (default <root>/tests)"
+      },
+      "noTestsFound": "No test files found under {root} (tests/**/*.test.lua is scanned by default; adjust pack.yaml tests.include to change that)",
+      "summaryLine": "Summary: passed {passed} / failed {failed} / errored {errored}",
+      "reportWritten": "JSON report written: {path}",
+      "hubDelegated": "Delegated the test run to the hub (127.0.0.1:{port})",
+      "runStart": "Running {count} test file(s)…",
+      "exitOk": "All tests passed",
+      "exitFailed": "There are failing test cases",
+      "exitErrored": "There are test cases that raised an error"
     }
   },
   "error": {
@@ -1111,7 +1209,59 @@
     },
     "hub": {
       "delegateFailed": "Hub delegation failed: {message} (no fallback to standalone mode while the hub is online; check that tts hub is still running)"
-    }
+    },
+    "publish": {
+      "jsonNotFound": "Save JSON not found: {path}",
+      "jsonInvalid": "Invalid save JSON: {path} ({detail})",
+      "bsonInvalid": "BSON self-check failed: little-endian length of the first 4 bytes is {headerLength}, but the file size is {byteLength}",
+      "outputExists": "Output file already exists: {path}",
+      "bsonNotFound": "BSON file not found: {path}",
+      "clipboardFailed": "clip.exe exited with an unexpected code: {code}",
+      "kpsteamNotAvailable": "kpsteam is not available: {reason} (NOT_WINDOWS / NOT_FOUND / VERSION_FAILED)",
+      "uploadFailed": "kpsteam upload failed (exit code {code})",
+      "modeConflict": "--check and --manual-guide are mutually exclusive and cannot be combined",
+      "itemRequired": "Publish / update mode requires --item <Workshop item id>",
+      "networkError": "Failed to fetch Workshop item {itemId} (network error): {detail}",
+      "apiStatus": "The Steam Web API returned a non-200 status code: {status}",
+      "apiBody": "The Steam Web API response body is not valid JSON (status {status}): {detail}",
+      "apiResult": "The Steam Web API returned a failure result code: {result}",
+      "itemPrivate": "Workshop item {itemId} is not public (or access is denied)",
+      "detailsEmpty": "The Steam Web API returned no details for item {itemId}"
+    },
+    "test": {
+      "entryNotFound": "The Lua entry file for bundling the tests does not exist: {path}",
+      "bundleFailed": "Failed to bundle the Lua tests: {detail}",
+      "discoverPackYamlInvalid": "The tests section of pack.yaml is unusable; it was ignored and the default discovery config was restored: {detail}",
+      "discoverFileUnreadable": "Test file scan failed; the entry was skipped: {detail}",
+      "runBundleFailed": "Failed to bundle test file {relativePath}: {detail}",
+      "runFileUnreadable": "Failed to read test file {relativePath}: {detail}",
+      "runFileTimeout": "Test file {relativePath} timed out: {detail}",
+      "runExecFailed": "Test file {relativePath} failed to execute: {detail}",
+      "runResultsMalformed": "The return value of test file {relativePath} cannot be parsed as test results: {detail}",
+      "runGlobalTimeout": "The global timeout ({globalTimeoutMs}ms) elapsed; test file {relativePath} was not executed"
+    },
+    "PUBLISH_JSON_NOT_FOUND": "Save JSON not found: {msg}",
+    "PUBLISH_JSON_INVALID": "Invalid save JSON: {msg}",
+    "PUBLISH_BSON_INVALID": "BSON payload self-check failed: {msg}",
+    "PUBLISH_OUTPUT_EXISTS": "Output file already exists: {msg}",
+    "PUBLISH_BSON_NOT_FOUND": "BSON file not found: {msg}",
+    "PUBLISH_KPSTEAM_NOT_AVAILABLE": "kpsteam is not available: {msg}",
+    "PUBLISH_UPLOAD_FAILED": "kpsteam upload failed: {msg}",
+    "PUBLISH_API_ERROR": "Steam Web API call failed: {msg}",
+    "PUBLISH_ITEM_PRIVATE": "The Workshop item is not public (or access is denied): {msg}",
+    "PUBLISH_NETWORK_ERROR": "Failed to fetch the Workshop item (network error): {msg}",
+    "PUBLISH_MODE_CONFLICT": "Conflicting command-line modes: {msg}",
+    "PUBLISH_ITEM_REQUIRED": "Missing --item: {msg}",
+    "TEST_ENTRY_NOT_FOUND": "Test bundle entry not found: {msg}",
+    "TEST_BUNDLE_FAILED": "Failed to bundle the tests: {msg}",
+    "TEST_DISCOVER_PACK_YAML_INVALID": "The tests section of pack.yaml is unusable: {msg}",
+    "TEST_DISCOVER_FILE_UNREADABLE": "Test file unreadable: {msg}",
+    "TEST_RUN_BUNDLE_FAILED": "Failed to bundle a test file: {msg}",
+    "TEST_RUN_FILE_UNREADABLE": "Failed to read a test file: {msg}",
+    "TEST_RUN_FILE_TIMEOUT": "A test file timed out: {msg}",
+    "TEST_RUN_EXEC_FAILED": "A test file failed to execute: {msg}",
+    "TEST_RUN_RESULTS_MALFORMED": "Malformed test results: {msg}",
+    "TEST_RUN_GLOBAL_TIMEOUT": "Global test-run timeout: {msg}"
   },
   "host": {
     "steamcloud": {
@@ -1290,6 +1440,14 @@
       "tts_push": {
         "title": "Push to game and reload (dangerous)",
         "description": "Dangerous: writes workspace scripts/UI back into the game and triggers a reload (SaveAndPlay); entries without script/ui fields are deleted by TTS. Requires an explicit confirm=true; the call is rejected otherwise."
+      },
+      "tts_test_run": {
+        "title": "Run Lua tests",
+        "description": "Run the Lua tests of a pack workspace tests/ directory inside TTS (default tests/**/*.test.lua) and return a RunReport JSON (runId / total / passed / failed / errored / bailed / results). Has side effects: the test scripts can read and write game state. Backed by the hub route POST /v1/test/run."
+      },
+      "tts_pack_build": {
+        "title": "Build the Workshop BSON payload",
+        "description": "Build the pack workspace into a TTS save JSON and export the Workshop upload BSON payload (pack build + bson.serialize); returns a BsonBuildResult JSON (outPath / byteLength / headerLength). Writes local files; with dryRun=true nothing is written and no header self-check is performed. Backed by the hub route POST /v1/pack/build."
       }
     }
   }

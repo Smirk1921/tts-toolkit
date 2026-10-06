@@ -8,7 +8,7 @@
  * 2. 安装进程级致命错误兜底（uncaughtException / unhandledRejection →
  *    stderr JSON Lines 英文一行 → exit 1）；
  * 3. 创建 hub 控制通道客户端（HubClient，缺省 127.0.0.1:39995）；
- * 4. 注册 10 个工具（src/mcp/tools/*.ts，每个文件一个 register()）；
+ * 4. 注册 12 个工具（src/mcp/tools/*.ts，每个文件一个 register()）；
  * 5. `await server.connect(new StdioServerTransport())`——main 随之 resolve，
  *    进程由传输层事件循环保持常驻。
  *
@@ -36,6 +36,8 @@
  * - `mcp.tool.tts_import.title`      / `mcp.tool.tts_import.description`
  * - `mcp.tool.tts_diff.title`        / `mcp.tool.tts_diff.description`
  * - `mcp.tool.tts_push.title`        / `mcp.tool.tts_push.description`
+ * - `mcp.tool.tts_test_run.title`    / `mcp.tool.tts_test_run.description`
+ * - `mcp.tool.tts_pack_build.title`  / `mcp.tool.tts_pack_build.description`
  */
 
 import { McpServer } from "@modelcontextprotocol/server";
@@ -49,10 +51,12 @@ import { register as registerDeckSlice } from "./tools/deck-slice.js";
 import { register as registerDiff } from "./tools/diff.js";
 import { register as registerExec } from "./tools/exec.js";
 import { register as registerImport } from "./tools/import.js";
+import { register as registerPackBuild } from "./tools/pack-build.js";
 import { register as registerPackList } from "./tools/pack-list.js";
 import { register as registerPull } from "./tools/pull.js";
 import { register as registerPush } from "./tools/push.js";
 import { register as registerStatus } from "./tools/status.js";
+import { register as registerTestRun } from "./tools/test-run.js";
 
 /** MCP 服务器名（MCP 客户端 initialize 时可见）。 */
 const SERVER_NAME = "tts-toolkit";
@@ -173,6 +177,10 @@ export async function main(): Promise<void> {
   registerImport(server, client);
   registerDiff(server, client);
   registerPush(server, client);
+
+  // 阶段 7（窗口 G）：测试运行器 + 发布链路（hub 路由 /v1/test/run、/v1/pack/build）
+  registerTestRun(server, client);
+  registerPackBuild(server, client);
 
   await server.connect(new StdioServerTransport());
 }

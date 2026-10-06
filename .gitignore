@@ -3,3 +3,4 @@ dist/
 *.log
 .DS_Store
 .tts/skeleton.json
+steam_appid.txt

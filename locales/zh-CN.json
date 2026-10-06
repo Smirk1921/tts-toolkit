@@ -390,6 +390,40 @@
       },
       "hub": {
         "description": "启动 hub 常驻进程：独占编辑器端口，提供 TCP/WS 扇出与仅本机控制通道（供 CLI 委托与 MCP 接入）"
+      },
+      "build": {
+        "description": "把图包工作区合成 TTS 存档 JSON，并导出创意工坊上传用 BSON 载荷",
+        "option": {
+          "out": "输出 BSON 路径（必填）",
+          "root": "工作区根目录",
+          "dryRun": "只打印摘要，不写文件、不生成手动上传手册"
+        }
+      },
+      "publish": {
+        "description": "把 BSON 载荷发布到 Steam 创意工坊（手动手册 / kpsteam 自动上传 / 元数据查询）",
+        "option": {
+          "item": "创意工坊条目 ID（发布 / 更新模式必填）",
+          "auto": "尝试用 kpsteam 自动上传（缺省只打印手动上传手册）",
+          "root": "工作区根目录（推导缺省 BSON 路径用）",
+          "bson": "BSON 载荷路径（缺省 <root>/dist/<图包名>.bson）",
+          "manualGuide": "只生成并打印手动上传手册",
+          "check": "查询并打印创意工坊条目的公开元数据"
+        }
+      },
+      "test": {
+        "description": "在 TTS 中运行 Lua 测试（图包工作区的 tests/ 目录）",
+        "argument": {
+          "path": "测试文件或目录（缺省 <root>/tests）"
+        },
+        "option": {
+          "root": "图包工作区根目录（默认当前目录）",
+          "target": "目标对象 guid（默认 -1 = Global）",
+          "timeout": "单文件超时毫秒数（默认 30000）",
+          "json": "把 JSON 报告写到指定路径",
+          "bail": "首个失败即停止运行后续文件",
+          "bundle": "用 luabundle 打包多文件测试（--no-bundle 关闭）",
+          "verbose": "显示测试里的 print 输出"
+        }
       }
     },
     "error": {
@@ -755,6 +789,70 @@
       },
       "started": "hub 已启动：控制通道 http://127.0.0.1:{controlPort}/v1；编辑器端口 {editorPort}；TCP 扇出 {tcpPort}；WS 扇出 {wsPort}（Ctrl+C 停止）",
       "stopped": "hub 已停止"
+    },
+    "build": {
+      "description": "把图包工作区合成 TTS 存档 JSON，并导出创意工坊上传用 BSON 载荷",
+      "dryRun": "dry-run：将生成 JSON {jsonPath} 与 BSON {bsonPath}；替换脚本 {scripts} / UI {ui} / 对象 {objects} 处（未写任何文件）",
+      "dryRunNote": "提示：dry-run 不写文件、也不生成手动上传手册；去掉 --dry-run 才会真正产出 BSON 载荷。",
+      "jsonDone": "已生成存档 JSON：{jsonPath}（替换脚本 {scripts} / UI {ui} / 对象 {objects} 处）",
+      "bsonDone": "已生成 BSON 载荷：{bsonPath}（{bytes} 字节）",
+      "verifyOk": "BSON 自检通过：前 4 字节小端长度 == 文件大小（{bytes} 字节）",
+      "clipboardOk": "BSON 路径已复制到剪贴板：{path}",
+      "clipboardFail": "复制 BSON 路径到剪贴板失败（{error}）；请手动复制上方路径。"
+    },
+    "publish": {
+      "description": "把 BSON 载荷发布到 Steam 创意工坊（手动手册 / kpsteam 自动上传 / 元数据查询）",
+      "check": {
+        "done": "创意工坊条目 {itemId} 的公开元数据："
+      },
+      "kpsteamHint": "检测到 kpsteam {version}（可用 --auto 自动上传；本工具绝不主动启动 Steam / TTS）",
+      "uploading": "正在用 kpsteam 上传条目 {itemId} 的载荷：{bsonPath}",
+      "kpsteamOutput": "kpsteam 输出（stdout / stderr 原文）：",
+      "uploadOk": "kpsteam 上传完成；红线：本工具只调用 kpsteam 子进程，绝不主动启动 Steam / TTS。",
+      "verifyUpdated": "上传后 time_updated 已变为 {timeUpdated}（第 {attempts} 次轮询确认）",
+      "verifyNotUpdated": "上传后轮询 {attempts} 次均未见 time_updated 变化（上传本身已成功，可稍后到工坊页面确认）",
+      "verifySkipped": "跳过 time_updated 变化验证：上传前未能取到基线，不猜结论。",
+      "clipboardOk": "BSON 路径已复制到剪贴板：{path}",
+      "clipboardFail": "复制 BSON 路径到剪贴板失败（{error}）；请手动复制上方路径。"
+    },
+    "test": {
+      "description": "在 TTS 中运行 Lua 测试（图包工作区的 tests/ 目录）",
+      "option_root": "图包工作区根目录（默认当前目录）",
+      "option_target": "目标对象 guid（默认 -1 = Global）",
+      "option_timeout": "单文件超时毫秒数（默认 30000）",
+      "option_json": "把 JSON 报告写到指定路径",
+      "option_bail": "首个失败即停止运行后续文件",
+      "option_bundle": "用 luabundle 打包多文件测试（--no-bundle 关闭）",
+      "option_verbose": "显示测试里的 print 输出",
+      "no_tests_found": "未发现测试文件：{root} 下没有匹配的测试（默认查找 tests/**/*.test.lua，可用 pack.yaml 的 tests.include 调整）",
+      "summary": "总结: 通过 {passed} / 失败 {failed} / 错误 {errored}",
+      "failed": "有 {failed} 个用例失败",
+      "errored": "有 {errored} 个用例执行出错",
+      "bailed": "已提前终止（--bail：出现失败后不再运行后续文件）",
+      "report_written": "JSON 报告已写入：{path}",
+      "hub_delegated": "已委托 hub（127.0.0.1:{port}）运行测试",
+      "standalone": "hub 未运行：独立模式直接连接编辑器端口运行测试",
+      "run_start": "开始运行 {count} 个测试文件…",
+      "option": {
+        "root": "图包工作区根目录（默认当前目录）",
+        "target": "目标对象 guid（默认 -1 = Global）",
+        "timeout": "单文件超时毫秒数（默认 30000）",
+        "json": "把 JSON 报告写到指定路径",
+        "bail": "首个失败即停止运行后续文件",
+        "bundle": "用 luabundle 打包多文件测试（--no-bundle 关闭）",
+        "verbose": "显示测试里的 print 输出"
+      },
+      "argument": {
+        "path": "测试文件或目录（缺省 <root>/tests）"
+      },
+      "noTestsFound": "未发现测试文件：{root} 下没有匹配的测试（默认查找 tests/**/*.test.lua，可用 pack.yaml 的 tests.include 调整）",
+      "summaryLine": "总结: 通过 {passed} / 失败 {failed} / 错误 {errored}",
+      "reportWritten": "JSON 报告已写入：{path}",
+      "hubDelegated": "已委托 hub（127.0.0.1:{port}）运行测试",
+      "runStart": "开始运行 {count} 个测试文件…",
+      "exitOk": "全部通过",
+      "exitFailed": "存在失败用例",
+      "exitErrored": "存在执行出错的用例"
     }
   },
   "error": {
@@ -1111,7 +1209,59 @@
     },
     "hub": {
       "delegateFailed": "hub 委托失败：{message}（hub 在线时不回退独立模式；请检查 tts hub 是否仍在运行）"
-    }
+    },
+    "publish": {
+      "jsonNotFound": "存档 JSON 不存在：{path}",
+      "jsonInvalid": "存档 JSON 无效：{path}（{detail}）",
+      "bsonInvalid": "BSON 自检失败：前 4 字节小端长度 {headerLength} != 文件大小 {byteLength}",
+      "outputExists": "输出文件已存在：{path}",
+      "bsonNotFound": "BSON 文件不存在：{path}",
+      "clipboardFailed": "clip.exe 退出码异常：{code}",
+      "kpsteamNotAvailable": "kpsteam 不可用：{reason}（NOT_WINDOWS / NOT_FOUND / VERSION_FAILED）",
+      "uploadFailed": "kpsteam 上传失败（退出码 {code}）",
+      "modeConflict": "--check 与 --manual-guide 互斥，不能同时使用",
+      "itemRequired": "发布 / 更新模式必须提供 --item <创意工坊条目 ID>",
+      "networkError": "查询创意工坊条目 {itemId} 失败（网络错误）：{detail}",
+      "apiStatus": "Steam Web API 返回非 200 状态码：{status}",
+      "apiBody": "Steam Web API 响应体不是合法 JSON（状态码 {status}）：{detail}",
+      "apiResult": "Steam Web API 返回失败结果码：{result}",
+      "itemPrivate": "创意工坊条目 {itemId} 不是公开条目（或无权访问）",
+      "detailsEmpty": "Steam Web API 未返回条目 {itemId} 的详情"
+    },
+    "test": {
+      "entryNotFound": "打包测试的入口 Lua 文件不存在：{path}",
+      "bundleFailed": "打包 Lua 测试失败：{detail}",
+      "discoverPackYamlInvalid": "pack.yaml 的 tests 段不可用，已忽略并回退默认发现配置：{detail}",
+      "discoverFileUnreadable": "测试文件扫描失败，已跳过：{detail}",
+      "runBundleFailed": "打包测试文件 {relativePath} 失败：{detail}",
+      "runFileUnreadable": "读取测试文件 {relativePath} 失败：{detail}",
+      "runFileTimeout": "测试文件 {relativePath} 执行超时：{detail}",
+      "runExecFailed": "测试文件 {relativePath} 执行失败：{detail}",
+      "runResultsMalformed": "测试文件 {relativePath} 的执行返回值无法解析为测试结果：{detail}",
+      "runGlobalTimeout": "全局超时（{globalTimeoutMs}ms）已到，测试文件 {relativePath} 未执行"
+    },
+    "PUBLISH_JSON_NOT_FOUND": "存档 JSON 不存在：{msg}",
+    "PUBLISH_JSON_INVALID": "存档 JSON 无效：{msg}",
+    "PUBLISH_BSON_INVALID": "BSON 载荷自检失败：{msg}",
+    "PUBLISH_OUTPUT_EXISTS": "输出文件已存在：{msg}",
+    "PUBLISH_BSON_NOT_FOUND": "BSON 文件不存在：{msg}",
+    "PUBLISH_KPSTEAM_NOT_AVAILABLE": "kpsteam 不可用：{msg}",
+    "PUBLISH_UPLOAD_FAILED": "kpsteam 上传失败：{msg}",
+    "PUBLISH_API_ERROR": "Steam Web API 调用失败：{msg}",
+    "PUBLISH_ITEM_PRIVATE": "创意工坊条目非公开（或无权访问）：{msg}",
+    "PUBLISH_NETWORK_ERROR": "查询创意工坊条目失败（网络错误）：{msg}",
+    "PUBLISH_MODE_CONFLICT": "命令行模式互斥：{msg}",
+    "PUBLISH_ITEM_REQUIRED": "缺少 --item：{msg}",
+    "TEST_ENTRY_NOT_FOUND": "测试打包入口不存在：{msg}",
+    "TEST_BUNDLE_FAILED": "测试打包失败：{msg}",
+    "TEST_DISCOVER_PACK_YAML_INVALID": "pack.yaml 的 tests 段不可用：{msg}",
+    "TEST_DISCOVER_FILE_UNREADABLE": "测试文件不可读：{msg}",
+    "TEST_RUN_BUNDLE_FAILED": "测试文件打包失败：{msg}",
+    "TEST_RUN_FILE_UNREADABLE": "测试文件读取失败：{msg}",
+    "TEST_RUN_FILE_TIMEOUT": "测试文件执行超时：{msg}",
+    "TEST_RUN_EXEC_FAILED": "测试文件执行失败：{msg}",
+    "TEST_RUN_RESULTS_MALFORMED": "测试结果格式非法：{msg}",
+    "TEST_RUN_GLOBAL_TIMEOUT": "测试运行全局超时：{msg}"
   },
   "host": {
     "steamcloud": {
@@ -1290,6 +1440,14 @@
       "tts_push": {
         "title": "写回游戏并重载（危险）",
         "description": "危险操作：把工作区脚本 / UI 写回游戏并触发重载（SaveAndPlay）；scriptStates 缺 script / ui 字段的内容会被 TTS 删除。必须显式传 confirm=true，否则调用被拒。"
+      },
+      "tts_test_run": {
+        "title": "运行 Lua 测试",
+        "description": "在 TTS 中运行图包工作区 tests/ 目录的 Lua 测试（缺省 tests/**/*.test.lua），返回 RunReport JSON（runId / total / passed / failed / errored / bailed / results）。有副作用：测试脚本会读写游戏状态。对应 hub 路由 POST /v1/test/run。"
+      },
+      "tts_pack_build": {
+        "title": "构建工坊 BSON 载荷",
+        "description": "从图包工作区合成 TTS 存档 JSON 并导出创意工坊上传用 BSON 载荷（pack build + bson.serialize），返回 BsonBuildResult JSON（outPath / byteLength / headerLength）。写本地文件；dryRun=true 时只统计不落盘、不做头部自检。对应 hub 路由 POST /v1/pack/build。"
       }
     }
   }

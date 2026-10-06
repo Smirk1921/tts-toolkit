@@ -34,7 +34,7 @@ describe('tryHubClient', () => {
     const client = await tryHubClient();
     expect(client).toBeInstanceOf(HubClient);
     expect(probeHub).toHaveBeenCalledTimes(1);
-    expect(probeHub).toHaveBeenCalledWith(); // 无参探测（缺省 127.0.0.1:39995）
+    expect(probeHub).toHaveBeenCalledWith({ timeoutMs: 3000 }); // 放宽探测（窗口 G / Stage D：Windows 下 Node fetch 首次连接 127.0.0.1 实测 ~1.5s）
   });
 
   it('hub 不在线（probeHub 返回 null）→ 返回 null 且不抛', async () => {

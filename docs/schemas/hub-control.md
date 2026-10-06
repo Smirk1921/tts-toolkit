@@ -5,6 +5,7 @@
 > 依据：`src/hub/control.ts`（控制通道服务实现，12 条 JSON 路由 + SSE）、`src/hub/lifecycle.ts`（进程编排与优雅退出）、`src/mcp/client.ts`（`HubClient` / `probeHub`）、`src/cli/_shared.ts`（CLI 委托判定）、`src/protocol/ports.ts`（端口常量）；`/v1/push` 的流水线语义依据 `src/pack/push.ts`（`pushSaveAndPlay`）与 `src/safety/baseline.ts`。路由表与 `方案设计.md` §14.5.1 S2、`施工流程.md` 阶段 4 的路由映射一致。
 > 本文档描述**已实现的真实契约**，不是设想稿。发现的实现问题一律显式标注（§4.2 / §4.10 / §9 已知问题 #1），不隐去。
 > **阶段 5（写入路径）修订（2026-10-05）**：已知问题 #1（hub 运行期 pull / diff 必 500）**已修复**——`pullFromGame` / `diffWorkspace` 增加 `server?: EditorServer` 注入，hub 路由传 `daemon.server` 复用已绑定的 39998（§4.2 / §4.10）；`POST /v1/push` 契约扩展为完整写入流水线（§4.11）。
+> **阶段 7（测试运行器 + 发布链路）修订（2026-10-06）**：新增 `POST /v1/test/run`（§4.13）与 `POST /v1/pack/build`（§4.14）——JSON 路由 **12 → 14 条**；`HubClient` 补 `testRun` / `packBuild`（§6.1）；MCP 工具 10 → 12 个（新增 `tts_test_run` / `tts_pack_build`，§7）。
 
 ---
 
@@ -20,7 +21,7 @@ hub 控制通道是 `tts hub` 常驻进程暴露的**本机 HTTP+JSON 控制面*
 | 使用方 | 入口 | 说明 |
 | --- | --- | --- |
 | tts CLI | `src/cli/_shared.ts` 的 `tryHubClient()` | 先 `probeHub()`（800ms），在线则经 `HubClient` 委托；离线走独立模式（临时绑 39998） |
-| MCP 服务 | `src/mcp/main.ts` → `src/mcp/server.ts`（`tts-mcp` bin，独立 stdio 进程，不经 `tts` 主 CLI） | 10 个工具全部经同一个 `HubClient` 访问 hub，自己不绑 39998 |
+| MCP 服务 | `src/mcp/main.ts` → `src/mcp/server.ts`（`tts-mcp` bin，独立 stdio 进程，不经 `tts` 主 CLI） | 12 个工具全部经同一个 `HubClient` 访问 hub，自己不绑 39998（阶段 7 起为 12 个：含 `tts_test_run` / `tts_pack_build`） |
 | 未来 GUI | 同一条 HTTP 控制面 | S2 按"将来给 GUI 用"的标准设计（`施工流程.md` 阶段 4） |
 
 为什么是 HTTP+JSON：本机进程间请求/响应语义直接、任何语言可调、curl 可调试；实现零框架（`node:http`），不引入 HTTP 服务依赖。它与 hub 的**三路扇出**（39997 TCP / 39996 WS / 进程内事件总线，`src/hub/fanout.ts`）是两条不同通路：控制通道面向"命令"，扇出面向"事件"；只读事件订阅由控制通道内的一条 SSE 路由提供（§5），`HubClient` 不覆盖 SSE。
@@ -107,7 +108,7 @@ hub 控制通道是 `tts hub` 常驻进程暴露的**本机 HTTP+JSON 控制面*
 
 ### 4.0 总览
 
-S2 控制面共 **12 条 JSON 路由**（下表）+ **1 条 SSE 事件流**（`GET /v1/events`，见 §5），共 13 个路径。
+S2 控制面共 **12 条 JSON 路由**（下表）+ **1 条 SSE 事件流**（`GET /v1/events`，见 §5），共 13 个路径；阶段 7（窗口 G）追加 2 条 JSON 路由（§4.13 / §4.14，下表 13 / 14 行），**JSON 路由合计 14 条**。
 
 | # | 方法 | 路径 | 作用 | 副作用 | 请求体 | 成功响应 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -123,6 +124,8 @@ S2 控制面共 **12 条 JSON 路由**（下表）+ **1 条 SSE 事件流**（`G
 | 10 | POST | `/v1/diff` | 本地 vs 游戏内差异 | 无 | `{root}` | `DiffResult` |
 | 11 | POST | `/v1/push` | 写回并重载（必须 `confirm:true`） | 改游戏状态（可选自动备份） | `{root, confirm:true, dryRun?, forceScriptsOnly?, skipBackup?, skipBaselineCheck?, backupRetention?}` | `PushSaveResult` 摘要（§4.11） |
 | 12 | POST | `/v1/hub/shutdown` | 优雅关闭 hub | 进程退出 | 不读 | `{ok:true}` |
+| 13 | POST | `/v1/test/run` | 在 TTS 中跑 Lua 测试（阶段 7） | 可能改游戏状态（测试脚本在 TTS 内执行） | `{root, targetGuid?, timeoutMs?, bail?, bundle?, include?}` | `RunReport`（§4.13） |
+| 14 | POST | `/v1/pack/build` | 工作区 → 存档 JSON → BSON 载荷（阶段 7） | 写本地文件（`dryRun` 时无） | `{root, outPath?, dryRun?}` | `BsonBuildResult` + 诊断字段（§4.14） |
 
 所有 POST 路由通用的请求侧错误（400 / 404 / 405 / 413 / 415）见 §3；各小节只列该路由特有的错误。curl 示例假定 hub 在缺省端口 39995。
 
@@ -421,6 +424,116 @@ curl -s -X POST http://127.0.0.1:39995/v1/push \
 curl -s -X POST http://127.0.0.1:39995/v1/hub/shutdown
 ```
 
+### 4.13 POST /v1/test/run
+
+阶段 7（窗口 G）新增：在 TTS 中跑图包工作区的 Lua 测试并返回 `RunReport`（`handleTestRun`，`src/hub/control.ts:1193-1226`）。落地顺序：`discoverTests`（`src/test/discover.ts`）→ 把 `targetGuid` / `timeoutMs` 覆盖到每个发现条目 → `TestRunner.run`（`src/test/runner.ts`）。
+
+- 请求体：
+
+| 字段 | 类型 | 必填 | 缺省 | 说明 |
+| --- | --- | --- | --- | --- |
+| `root` | string | ✅ | 无 | 图包工作区根目录（非空字符串；缺失 / 空白 → 400 `HUB_BAD_REQUEST`；hub 侧 `path.resolve`） |
+| `targetGuid` | string | 可省略 | `pack.yaml` 的 `tests.target_guid`，再缺省 `"-1"`（Global） | **逐文件条目的覆盖值**：给了就覆盖所有发现条目；非空字符串，类型不符 → 400 `HUB_BAD_REQUEST` |
+| `timeoutMs` | number | 可省略 | `pack.yaml` 的 `tests.timeout`，再缺省 `30000` | 单文件执行超时（正有限数字；非正数 / 非数字 → 400）；同为逐文件覆盖值 |
+| `bail` | boolean | 可省略 | `false` | 首个失败即停；粒度是**文件**（同一文件内的用例由 Lua 侧一次性跑完，无法中途停） |
+| `bundle` | boolean | 可省略 | `true` | 是否 luabundle 打包；`false` 时逐文件直跑（直跑模式没有模块解析能力，`require` 只对断言库 `tts.assert` 有效） |
+| `include` | string[] | 可省略 | `pack.yaml` 的 `tests.include`，再缺省 `["tests/**/*.test.lua"]` | 测试文件 glob（相对 `root`，元素必须是字符串）；CLI 把位置参数 `tts test <path>` 委托给 hub 时用；`[]` 表示"匹配空集"。**本字段是任务书 5 字段之外附加的可选项**（不加也能用缺省发现配置） |
+
+- 行为：
+  - **发现不到测试文件不是错误**：返回 `total=0` 的空报告（200），退出码由调用方（CLI）决定；
+  - **坑 17**：`new TestRunner(this.daemon.server)` 且 `RunOptions.server` 也注入 `daemon.server`（`control.ts:1217-1222`），复用 hub 已绑定的编辑器端口 39998——本路由绝不二次 `withEditorServer`；
+  - **断言失败 / 用例错误不是路由错误**：它们记在报告的 `failed` / `errored` 与 `results[].status` 里，路由照样 200；只有"无法完成一轮运行"的异常（打包失败、文件不可读、结果格式非法等 `PackError`）才 400；
+  - 发现阶段的 `TEST_DISCOVER_*`（pack.yaml 读不动 / tests 段不合约定 / 目录不可读）**只告警不上抛**（`discoverTests` 零异常设计，警告走 stderr），因此不会变成 4xx。
+- 响应 200 = `RunReport`（`src/test/types.ts`；结构化 JSON 英文键名，**不走 t()**）：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `runId` | string | 运行 ID（时间戳 36 进制 + 8 位随机后缀） |
+| `root` | string | resolve 后的工作区根 |
+| `startedAt` / `endedAt` | string | ISO 8601 起止时刻 |
+| `durationMs` | number | 总耗时 |
+| `total` / `passed` / `failed` / `errored` | number | 统计（`errored` 是运行时错误，与断言失败 `failed` 分开计） |
+| `bailed` | boolean | 是否因 `bail` 提前终止 |
+| `results` | `TestResult[]` | `{case:{name,sourceFile,sourceLine}, status:"passed"\|"failed"\|"error", failureReason?, asserts:[{kind,passed,message?,sourceFile?,sourceLine?}], durationMs, prints:string[]}` |
+
+- 可能的错误码：
+
+| HTTP | code | 触发 |
+| --- | --- | --- |
+| 400 | `HUB_BAD_REQUEST` | `root` 缺失 / 空白；`targetGuid` 非非空字符串；`timeoutMs` 非正数；`bail` / `bundle` 非布尔；`include` 非字符串数组 |
+| 400 | `HUB_PACK_ERROR` | 业务 `PackError` 透传，`details.packCode` ∈ `TEST_RUN_BUNDLE_FAILED`（某测试文件打包失败）/ `TEST_RUN_FILE_UNREADABLE`（直跑模式读文件失败）/ `TEST_RUN_FILE_TIMEOUT`（单文件执行超时）/ `TEST_RUN_EXEC_FAILED`（其他执行期错误）/ `TEST_RUN_RESULTS_MALFORMED`（拿回的结果不是合法 JSON）|
+| 405 | `HUB_METHOD_NOT_ALLOWED` | GET 本路由（响应带 `Allow: POST`）；404 路径拼错 |
+| 500 | `HUB_INTERNAL_ERROR` | TTS 未连接 / 会话超时 / 编辑器端口异常等普通 Error |
+
+- curl（默认发现配置 + 首个失败即停）：
+
+```bash
+curl -s -X POST http://127.0.0.1:39995/v1/test/run \
+  -H "Content-Type: application/json" \
+  -d '{"root":"D:/packs/第七大陆","bail":true}'
+```
+
+- curl（只跑一个子目录的测试，覆盖 targetGuid 与单文件超时）：
+
+```bash
+curl -s -X POST http://127.0.0.1:39995/v1/test/run \
+  -H "Content-Type: application/json" \
+  -d '{"root":"D:/packs/第七大陆","include":["tests/deck/**/*.test.lua"],"targetGuid":"-1","timeoutMs":60000}'
+```
+
+### 4.14 POST /v1/pack/build
+
+阶段 7（窗口 G）新增：图包工作区 → TTS 存档 JSON → 工坊上传用 BSON 载荷（`handlePackBuild`，`src/hub/control.ts:1253-1290`）。**纯本地文件流水线，不依赖 daemon.server**（不碰 39998 / 39999）；上控制通道只是为 MCP / 其他调用方提供统一入口（对比 §7 的边界表：上传本身仍只在 CLI / 手动流程里发生）。
+
+- 请求体：
+
+| 字段 | 类型 | 必填 | 缺省 | 说明 |
+| --- | --- | --- | --- | --- |
+| `root` | string | ✅ | 无 | 图包工作区根目录（非空字符串） |
+| `outPath` | string | 可省略 | 与中间 JSON 同目录同名、扩展名换成 `.bson`（即 `<root>/dist/<净化(pack.yaml name)>.bson`） | **输出 BSON 载荷路径**（非空字符串）；中间存档 JSON 一律走 `buildSave` 自己的缺省命名 |
+| `dryRun` | boolean | 可省略 | `false` | 只统计与生成摘要，不写 JSON / BSON 文件 |
+
+- 行为：
+  - `dryRun !== true`：`buildSave`（`src/pack/build.ts`：工作区 → 存档 JSON，缺省 `<root>/dist/<净化(pack.yaml name)>.json`，pack.yaml 缺失时回退骨架 `SaveName`）→ `buildBson`（`src/publish/bson.ts`：JSON → BSON，内部自检"前 4 字节小端整数 == 文件大小"，自检失败抛 `PUBLISH_BSON_INVALID`）；
+  - `dryRun === true`：只跑 `buildSave({dryRun: true})`（不写 JSON、不建 `dist/`），**不跑** `buildBson`（没有产物可转换）；响应的 `byteLength` / `headerLength` 恒为 `0`——不做虚报；
+  - 红线：本路由只产出本地文件，**绝不自动打开游戏 / Steam、不发起任何上传**（上传入口是 `tts publish`，见 §7 / `src/publish/kpsteam.ts`）。
+- 响应 200：`BsonBuildResult` 三字段 + 诊断字段：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `outPath` | string | 输出 BSON 绝对路径（`dryRun` 下是"将写入"的路径） |
+| `byteLength` | number | BSON 总字节数（`dryRun` 下恒 0） |
+| `headerLength` | number | 头部 4 字节小端值（实写时恒等于 `byteLength`，自检保证；`dryRun` 下恒 0） |
+| `dryRun` | boolean | 与请求一致 |
+| `jsonPath` | string | 中间存档 JSON 绝对路径（`buildSave` 的 `outPath`） |
+| `warnings` | string[] | `buildSave` 的不中断告警（中文、经 t()；如孤儿脚本 / UI / 对象目录、data.json 不可读），不改变 HTTP 状态 |
+| `scriptsReplaced` / `uiReplaced` / `objectsReplaced` / `decksPatched` | number | `buildSave` 的四个计数（口径见 `src/pack/build.ts` 模块头注释） |
+
+- 可能的错误码：
+
+| HTTP | code | 触发 |
+| --- | --- | --- |
+| 400 | `HUB_BAD_REQUEST` | `root` 缺失 / 空白；`outPath` 非非空字符串；`dryRun` 非布尔 |
+| 400 | `HUB_PACK_ERROR` | 业务 `PackError` 透传，`details.packCode` ∈ `SKELETON_MISSING`（未 unpack）/ `SKELETON_INVALID` / `GUID_MISMATCH` / `BUILD_FAILED` / `PUBLISH_JSON_NOT_FOUND` / `PUBLISH_JSON_INVALID` / `PUBLISH_BSON_INVALID` / `PUBLISH_OUTPUT_EXISTS` |
+| 405 | `HUB_METHOD_NOT_ALLOWED` | GET 本路由（响应带 `Allow: POST`）；404 路径拼错 |
+| 500 | `HUB_INTERNAL_ERROR` | 磁盘写入失败等普通 Error |
+
+- curl（实写：生成 JSON 与 BSON，BSON 路径由 pack.yaml 的 name 推导）：
+
+```bash
+curl -s -X POST http://127.0.0.1:39995/v1/pack/build \
+  -H "Content-Type: application/json" \
+  -d '{"root":"D:/packs/第七大陆"}'
+```
+
+- curl（试运行：只统计，不写文件；指定输出路径）：
+
+```bash
+curl -s -X POST http://127.0.0.1:39995/v1/pack/build \
+  -H "Content-Type: application/json" \
+  -d '{"root":"D:/packs/第七大陆","outPath":"D:/packs/第七大陆/dist/pack.bson","dryRun":true}'
+```
+
 ---
 
 ## 5. SSE 事件流
@@ -479,6 +592,8 @@ curl -N http://127.0.0.1:39995/v1/events
 | `diff(root)` | POST `/v1/diff` | `unknown` |
 | `push(root, confirm: true, opts?)` | POST `/v1/push` | `HubPushResult` `{ok:true, dryRun, pushed, skipped, items, backupDir?, baselineConflicts?, assetChanges?}` |
 | `shutdown()` | POST `/v1/hub/shutdown` | `HubOkResult` `{ok:true}` |
+| `testRun({root, targetGuid?, timeoutMs?, bail?, bundle?})` | POST `/v1/test/run` | `unknown`（`RunReport`，§4.13） |
+| `packBuild({root, outPath?, dryRun?})` | POST `/v1/pack/build` | `unknown`（`BsonBuildResult` + 诊断字段，§4.14） |
 
 - 缺省选项（`HubClientOptions`，`client.ts:49-76`）：`host=127.0.0.1`、`port=39995`、单请求 `timeoutMs=30000`（覆盖"发起请求 + 读取响应体"全程）；host 为 IPv6 字面量时自动加 `[]`。
 - 请求体由 `JSON.stringify` 序列化，仅在有 body 时带 `Content-Type: application/json`；`push` 的 `confirm` 参数类型是字面量 `true`——调用方传 `false` / 漏传**编译期**即报错，与服务端 `HUB_CONFIRM_REQUIRED` 门双保险（`client.ts:566`）。`push` 第 3 参 `PushOptions`（`dryRun` / `forceScriptsOnly` / `skipBackup` / `skipBaselineCheck` / `backupRetention`，全部可选）逐字段透传，未给的字段**不出现在请求体**里、由 hub 侧套用缺省值（§4.11）。
@@ -515,7 +630,7 @@ S2 明确控制通道**不暴露**以下能力（`control.ts:5-6`、`施工流�
 | `sync-upstream` | 上游仓库同步，不触碰游戏 | 对应本地命令 |
 | `review` | 评审流程（本地 diff / 门禁） | `tts review`（本地直接执行） |
 
-推论：MCP 的 10 个工具也不包含这些能力（工具清单见 `src/mcp/server.ts:29-38`）；控制通道内也**没有**通用文件读写 / 任意命令执行入口（`/v1/exec` 的 Lua 在 TTS 进程内执行，不是宿主机 shell）。
+推论：MCP 的 12 个工具也不包含这些能力（工具清单见 `src/mcp/server.ts:29-40`）；控制通道内也**没有**通用文件读写 / 任意命令执行入口（`/v1/exec` 的 Lua 在 TTS 进程内执行，不是宿主机 shell）。阶段 7 新增的 `/v1/pack/build`（§4.14）虽然"纯本地"，但它是**离线回路的构建步骤**（工作区 → 可加载存档 → 上传载荷），不是通用文件写入入口：路径由 `root` 推导、内容由 pack 布局决定，且不提供覆盖任意文件的能力。
 
 ---
 
@@ -541,3 +656,4 @@ S2 明确控制通道**不暴露**以下能力（`control.ts:5-6`、`施工流�
 | --- | --- |
 | 2026-10-05 | 初版（窗口 D / 阶段 4）。契约依据 `src/hub/control.ts`（12 条 JSON 路由 + `GET /v1/events` SSE）、`src/hub/lifecycle.ts`、`src/mcp/client.ts`、`src/cli/_shared.ts`；路由表与 `方案设计.md` §14.5.1 S2 / `施工流程.md` 阶段 4 一致。**已知问题 #1**：`/v1/scripts/pull` 与 `/v1/diff` 在 hub 运行期因 39998 端口冲突返回 500（待修，详见 §4.2 / §4.10）。**（阶段 5 已修复，见下行）** |
 | 2026-10-05 | 阶段 5（写入路径）Run 2 修订。① **已知问题 #1 修复落档**：`PullOptions.server` / `DiffOptions.server` 注入（`src/pack/pull.ts:93-99` / `src/pack/diff.ts:161-167`），hub 路由传 `daemon.server`（`control.ts:887` / `:1036`）——§4.2 / §4.10 的"待修"块改为"已修复"并补测试现状。② **§4.11 `/v1/push` 契约扩展**：请求体加 `dryRun` / `forceScriptsOnly` / `skipBackup` / `skipBaselineCheck` / `backupRetention` 五个可选字段，响应体改为 `{ok:true, dryRun, pushed, skipped, items(=pushed+skipped 兼容别名), backupDir?, baselineConflicts?, assetChanges?}`，错误码补 `PUSH_ASSET_CHANGES_DETECTED` / `BASELINE_CONFLICT` 等（经 `HUB_PACK_ERROR` + `details.packCode` 透传）。③ 依据行补 `src/pack/push.ts` / `src/safety/baseline.ts`；§3.3 / §3.4 / §6.1 / §6.2 同步 push 的新形状与注入语义；新增契约文档 `docs/schemas/baseline.json.md` 交叉引用。 |
+| 2026-10-06 | 阶段 7（窗口 G：测试运行器 + 发布链路）修订（子代理 C2）。① **新增 §4.13 `POST /v1/test/run`**：`discoverTests` + `TestRunner`（`server: daemon.server` 注入，坑 17），请求体 `{root, targetGuid?, timeoutMs?, bail?, bundle?, include?}`（`include` 为附加可选字段），响应 = `RunReport`；`details.packCode` 补 `TEST_RUN_*`。② **新增 §4.14 `POST /v1/pack/build`**：`buildSave` + `buildBson`（纯本地、不依赖 daemon.server），请求体 `{root, outPath?, dryRun?}`，响应 = `BsonBuildResult`（`{outPath, byteLength, headerLength}`）+ 诊断字段（`dryRun` / `jsonPath` / `warnings` / 四个替换计数），`dryRun` 下字节数恒 0。③ §4.0 总览表补 13 / 14 行、计数 12 → 14；§6.1 补 `testRun` / `packBuild`；§1 与 §7 的"MCP 10 个工具" → 12 个（新增 `tts_test_run` / `tts_pack_build`）。实现依据：`src/hub/control.ts:1193-1290`（两个 handler）、`src/mcp/client.ts`（`testRun` / `packBuild`）、`src/mcp/tools/test-run.ts` / `pack-build.ts`、`src/test/index.ts`（Stage A 桶文件）、`src/pack/build.ts`、`src/publish/bson.ts`。单测：`tests/unit/mcp-test-run.test.ts` / `tests/unit/mcp-pack-build.test.ts`。 |

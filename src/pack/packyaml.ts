@@ -112,6 +112,16 @@ function strictObjectError(label: string): (issue: z.core.$ZodRawIssue) => strin
  * - vcs             { lfs: 三选一 }，必填——约束 10，无默认值
  * - paths           { workdir: string }——workdir 缺省 "."
  * - upload          { prefix: string }——prefix 缺省 ""
+ * - tests           { include, exclude, timeout, target_guid }，可选——阶段 7 测试运行器
+ *                   的发现配置（窗口 G / Stage C 新增，与 src/test/discover.ts 的
+ *                   testsSectionSchema 字段名与约束对齐）：include / exclude 是相对
+ *                   pack 根的 glob（缺省 ["tests/**\/*_test.lua"] / []）、timeout 单文件
+ *                   超时毫秒（正整数，缺省 30000）、target_guid 目标对象 guid
+ *                   （缺省 "-1" = Global）。整块缺省时读回 undefined（与 push 同款，
+ *                   不补默认值）
+ *                   注：默认命名约定为 `*_test.lua`（下划线），不是 `*.test.lua`——
+ *                   文件名里的 "." 会被 luabundle 误认为路径分隔符（窗口 G / Stage D
+ *                   实测发现）。
  * - push            { backup_retention, baseline_check }，可选——阶段 5 写入路径的
  *                   push 子配置：backup_retention 备份保留数（整数 1~100，缺省 20）、
  *                   baseline_check 基线冲突检测开关（缺省 true）。整个节点缺省
@@ -154,6 +164,31 @@ export const packYamlSchema = z.strictObject(
     upload: z.strictObject(
       { prefix: z.string({ error: "upload.prefix 必须是字符串" }).default("") },
       { error: strictObjectError("upload") },
+    ),
+    tests: z.optional(
+      z.strictObject(
+        {
+          include: z
+            .array(
+              z.string({ error: "tests.include 必须是字符串数组" }),
+              { error: "tests.include 必须是数组" },
+            )
+            .default(["tests/**/*_test.lua"]),
+          exclude: z
+            .array(
+              z.string({ error: "tests.exclude 必须是字符串数组" }),
+              { error: "tests.exclude 必须是数组" },
+            )
+            .default([]),
+          timeout: z
+            .number({ error: "tests.timeout 必须是数字" })
+            .int({ error: "tests.timeout 必须是整数" })
+            .positive({ error: "tests.timeout 必须是正数" })
+            .default(30000),
+          target_guid: z.string({ error: "tests.target_guid 必须是字符串" }).default("-1"),
+        },
+        { error: strictObjectError("tests") },
+      ),
     ),
     push: z.optional(
       z.strictObject(

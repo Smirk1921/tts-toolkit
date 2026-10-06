@@ -20,6 +20,7 @@ import { Command, CommanderError } from "commander";
 
 import { initI18n, t, type Lang } from "../i18n/index.js";
 import { assetsCommand } from "./commands/assets.js";
+import { buildCommand } from "./commands/build.js";
 import { configCommand } from "./commands/config.js";
 import { deckCommand } from "./commands/deck.js";
 import { editCommand } from "./commands/edit.js";
@@ -31,8 +32,10 @@ import { importCommand } from "./commands/import.js";
 import { migrateCommand } from "./commands/migrate.js";
 import { packCommand } from "./commands/pack.js";
 import { pullCommand } from "./commands/pull.js";
+import { publishCommand } from "./commands/publish.js";
 import { reviewCommand } from "./commands/review.js";
 import { statusCommand } from "./commands/status.js";
+import { testCommand } from "./commands/test.js";
 import { vcsCommand } from "./commands/vcs.js";
 import { watchCommand } from "./commands/watch.js";
 
@@ -190,6 +193,10 @@ program.addCommand(hubCommand);
 program.addCommand(watchCommand);
 // 阶段 6 新增：edit 跨编辑器打开脚本（6A 轻量层；实现见 commands/edit.ts）
 program.addCommand(editCommand);
+// 阶段 7 新增：测试运行器 + 发布链路（窗口 G；实现见 commands/test.ts / build.ts / publish.ts）
+program.addCommand(testCommand);
+program.addCommand(buildCommand);
+program.addCommand(publishCommand);
 localizeCommandTree(program);
 
 /**

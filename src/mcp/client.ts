@@ -1,7 +1,8 @@
 // src/mcp/client.ts
 /**
  * hub 控制通道 HTTP 客户端（{@link HubClient} / {@link probeHub}）：CLI 与 MCP 工具层
- * 共用的唯一 hub 访问入口，与 src/hub/control.ts 的 12 条 S2 路由一一对应（本模块
+ * 共用的唯一 hub 访问入口，与 src/hub/control.ts 的 12 条 S2 路由 + 2 条阶段 7
+ * 路由（/v1/test/run、/v1/pack/build）一一对应（本模块
  * 不覆盖 GET /v1/events SSE——事件订阅由扇出层 TCP / WS 客户端承担，见
  * src/hub/fanout.ts）。
  *
@@ -305,7 +306,8 @@ function buildBaseUrl(host: string, port: number): string {
 // ---------------------------------------------------------------------------
 
 /**
- * hub 控制通道 HTTP 客户端：方法与 src/hub/control.ts 的 12 条 S2 路由一一对应，
+ * hub 控制通道 HTTP 客户端：方法与 src/hub/control.ts 的 12 条 S2 路由 + 2 条
+ * 阶段 7 路由（/v1/test/run、/v1/pack/build）一一对应，
  * CLI 与 MCP 工具层共用。实例无状态（可长期持有），失败按模块头注释的三类语义
  * 抛 {@link HubNotRunningError} / {@link HubError}，绝不返回半截结果。
  */
@@ -633,6 +635,48 @@ export class HubClient {
     const body = await this.request("POST", "/hub/shutdown");
     return expectOkBody(body, "/v1/hub/shutdown");
   }
+
+  /**
+   * POST /v1/test/run：在 TTS 中跑图包工作区的 Lua 测试（阶段 7）。
+   *
+   * 未提供的可选字段不出现在请求体里，缺省语义由 hub 侧决定（targetGuid 走
+   * pack.yaml tests.target_guid / "-1"，timeoutMs 走 tests.timeout / 30000，
+   * bail=false，bundle=true）。hub 侧负责发现测试文件并注入自己已绑定的编辑器
+   * 端口（坑 17），本方法只透传。
+   * @param opts 运行参数（root 必填；targetGuid / timeoutMs 是逐文件覆盖值）
+   * @returns 控制通道 JSON 响应体（RunReport：`{runId, root, startedAt, endedAt,
+   *   durationMs, total, passed, failed, errored, bailed, results}`；无测试文件时
+   *   是 total=0 的空报告，不是错误）
+   * @throws HubNotRunningError hub 不可达时
+   * @throws HubError hub 返回协议错误（业务 PackError 以 HUB_PACK_ERROR 透传，
+   *   details.packCode ∈ TEST_RUN_* / TEST_DISCOVER_*）时
+   */
+  async testRun(opts: {
+    root: string;
+    targetGuid?: string;
+    timeoutMs?: number;
+    bail?: boolean;
+    bundle?: boolean;
+  }): Promise<unknown> {
+    return this.request("POST", "/test/run", opts);
+  }
+
+  /**
+   * POST /v1/pack/build：图包工作区 → 存档 JSON → BSON 载荷（阶段 7）。
+   *
+   * 纯本地文件操作，hub 侧不依赖编辑器端口；outPath 指**输出 BSON 路径**（缺省与
+   * 中间 JSON 同目录同名、扩展名换成 .bson）。
+   * @param opts 构建参数（root 必填；outPath / dryRun 可选——dryRun=true 时不写
+   *   任何文件，响应里的 byteLength / headerLength 恒为 0）
+   * @returns 控制通道 JSON 响应体（BsonBuildResult `{outPath, byteLength,
+   *   headerLength}` 追加诊断字段 dryRun / jsonPath / warnings / 各替换计数）
+   * @throws HubNotRunningError hub 不可达时
+   * @throws HubError hub 返回协议错误（业务 PackError 以 HUB_PACK_ERROR 透传，
+   *   details.packCode ∈ SKELETON_* / BUILD_FAILED / GUID_MISMATCH / PUBLISH_*）时
+   */
+  async packBuild(opts: { root: string; outPath?: string; dryRun?: boolean }): Promise<unknown> {
+    return this.request("POST", "/pack/build", opts);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -653,8 +697,12 @@ export async function probeHub(opts?: HubClientOptions): Promise<HubProbeResult 
   const port = opts?.port ?? DEFAULT_HUB_PORT;
   const host = opts?.host ?? DEFAULT_HUB_HOST;
   const url = `${buildBaseUrl(host, port)}/status`;
+  // Windows 下 Node 全局 fetch 首次连接 127.0.0.1 实测需要 ~1.5s（IPv6 localhost 解析顺序
+  // 或代理检测），800ms 固定超时会在 hub 真实在线时误判为不在线，导致 CLI 的 tryHubClient
+  // 走独立模式绑 39998 与 hub 冲突（窗口 G / Stage D 实测）。允许 opts.timeoutMs 覆盖。
+  const timeoutMs = opts?.timeoutMs ?? PROBE_TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) {

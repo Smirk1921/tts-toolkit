@@ -20,6 +20,8 @@
  * | POST | /v1/push                  | 写回并重载（必须 confirm:true）     |
  * | POST | /v1/hub/shutdown          | 优雅关闭 hub                        |
  * | GET  | /v1/events                | SSE 事件流                          |
+ * | POST | /v1/test/run              | 跑 Lua 测试返回 RunReport（阶段 7） |
+ * | POST | /v1/pack/build            | 工作区 → 存档 JSON → BSON（阶段 7） |
  *
  * 统一约定：
  * - 只监听回环地址（opts.host 缺省 "127.0.0.1"；通配地址 "0.0.0.0" / "::" /
@@ -49,6 +51,19 @@
  *   `{ok:true, dryRun, pushed, skipped, items(=pushed+skipped), backupDir?,
  *   baselineConflicts?, assetChanges?}`，业务 PackError 由 respondError 统一
  *   映射为 400 HUB_PACK_ERROR + details.packCode。
+ * - /v1/test/run 与 /v1/pack/build（阶段 7，窗口 G）：两条互不相关的本地流水线路由——
+ *   - /v1/test/run：body `{root, targetGuid?, timeoutMs?, bail?, bundle?, include?}`，
+ *     discoverTests 发现文件 → targetGuid / timeoutMs 覆盖到每个条目 →
+ *     `new TestRunner(this.daemon.server).run({..., server: this.daemon.server})`
+ *     （坑 17：复用 hub 已绑定的 39998，绝不二次绑定），响应是 RunReport；
+ *     发现不到测试文件不是错误（返回 total=0 的空报告，由调用方决定退出码）；
+ *   - /v1/pack/build：body `{root, outPath?, dryRun?}`，纯本地文件操作、
+ *     **不依赖 daemon.server**：buildSave（工作区 → 存档 JSON）→ buildBson
+ *     （JSON → BSON，内部自检前 4 字节长度 == 文件大小），响应为
+ *     BsonBuildResult + 诊断字段（dryRun / jsonPath / warnings 等；dryRun=true
+ *     时不写任何文件，byteLength / headerLength 恒为 0）；
+ *   两条路由的业务失败都经 respondError 映射为 400 HUB_PACK_ERROR +
+ *   details.packCode（TEST_RUN_* / SKELETON_* / PUBLISH_* 等）。
  *
  * 本模块不产出面向用户的文案：错误 message 是协议层英文短句（消费方是 MCP 工具
  * 层与运维日志，双语呈现由 MCP 层负责），与 src/hub/lifecycle.ts 的日志同一口径
@@ -58,10 +73,12 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
+import path from "node:path";
 
 import { checkUrls } from "../assets/check.js";
 import { planReplace, type PlanOptions } from "../deck/plan.js";
 import { sliceAtlas, type SliceOptions } from "../deck/slice.js";
+import { buildSave } from "../pack/build.js";
 import { diffWorkspace } from "../pack/diff.js";
 import { importAssets } from "../pack/import.js";
 import { PackError } from "../pack/packyaml.js";
@@ -69,9 +86,11 @@ import { pullFromGame } from "../pack/pull.js";
 import { pushSaveAndPlay } from "../pack/push.js";
 import { readRegistry } from "../pack/registry.js";
 import { InboundId } from "../protocol/messages.js";
+import { buildBson } from "../publish/bson.js";
 import { luaGetObjectCount, luaGetVersion } from "../session/lua.js";
 import { LuaError } from "../session/exec.js";
 import type { ScriptState } from "../session/scripts.js";
+import { discoverTests, TestRunner } from "../test/index.js";
 import type { HubDaemon } from "./daemon.js";
 
 // ---------------------------------------------------------------------------
@@ -370,6 +389,44 @@ function optionalPositiveNumber(body: Record<string, unknown>, field: string): n
 }
 
 /**
+ * 从请求体取可选的非空字符串字段（/v1/test/run 的 targetGuid、/v1/pack/build 的
+ * outPath 共用）。
+ * @param body 已解析的请求体
+ * @param field 字段名（用于错误消息）
+ * @returns 字段值；缺省时 undefined
+ * @throws BadRequestError 字段存在但不是非空字符串时
+ */
+function optionalString(body: Record<string, unknown>, field: string): string | undefined {
+  const value = body[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    return value;
+  }
+  throw new BadRequestError(`invalid field: ${field} (non-empty string required)`);
+}
+
+/**
+ * 从请求体取可选的字符串数组字段（/v1/test/run 的 include：CLI 把位置参数
+ * `tts test <path>` 委托给 hub 时用；元素必须是字符串，空数组按"匹配空集"处理）。
+ * @param body 已解析的请求体
+ * @param field 字段名（用于错误消息）
+ * @returns 字段值；缺省时 undefined
+ * @throws BadRequestError 字段存在但不是字符串数组时
+ */
+function optionalStringArray(body: Record<string, unknown>, field: string): string[] | undefined {
+  const value = body[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (isStringArray(value)) {
+    return value;
+  }
+  throw new BadRequestError(`invalid field: ${field} (array of strings required)`);
+}
+
+/**
  * 从请求体取可选的布尔字段（/v1/push 的 dryRun / forceScriptsOnly / skipBackup /
  * skipBaselineCheck 等开关共用）。
  * @param body 已解析的请求体
@@ -557,6 +614,8 @@ class ControlServerImpl implements ControlServer {
       ["/v1/import", (req, res) => this.handleImport(req, res)],
       ["/v1/diff", (req, res) => this.handleDiff(req, res)],
       ["/v1/push", (req, res) => this.handlePush(req, res)],
+      ["/v1/test/run", (req, res) => this.handleTestRun(req, res)],
+      ["/v1/pack/build", (req, res) => this.handlePackBuild(req, res)],
       ["/v1/hub/shutdown", (_req, res) => this.handleShutdown(res)],
     ]);
     this.server = createServer((req, res) => {
@@ -1104,6 +1163,130 @@ class ControlServerImpl implements ControlServer {
         : {}),
       ...(result.assetChanges !== undefined ? { assetChanges: result.assetChanges } : {}),
     });
+  }
+
+  /**
+   * POST /v1/test/run：在 TTS 中跑图包工作区的 Lua 测试，返回 RunReport（阶段 7）。
+   *
+   * 流程：
+   * 1. 字段校验（root 必填；targetGuid / outPath 类非空字符串、timeoutMs 正数、
+   *    bail / bundle 布尔、include 字符串数组，非法即 400 HUB_BAD_REQUEST）；
+   * 2. {@link discoverTests} 发现测试文件（include 缺省走 pack.yaml tests.include，
+   *    再缺省内置 glob `tests/**\/*.test.lua`）——发现不到不是错误；
+   * 3. targetGuid / timeoutMs 是**逐文件条目的覆盖值**（pack.yaml 里是全局配置），
+   *    给了就整体覆盖到每个发现条目上；
+   * 4. 坑 17：`new TestRunner(this.daemon.server)` 并把 `server: this.daemon.server`
+   *    注入 RunOptions（runner 侧 opts.server 优先），复用 hub 已绑定的编辑器端口
+   *    39998——本路由绝不二次绑定（与 /v1/pull、/v1/diff、/v1/push 同款）；
+   * 5. 响应体就是 RunReport（结构化 JSON 英文键名，不走 t()）：`{runId, root,
+   *    startedAt, endedAt, durationMs, total, passed, failed, errored, bailed,
+   *    results[]}`。
+   *
+   * 业务失败（PackError：TEST_RUN_BUNDLE_FAILED / TEST_RUN_FILE_UNREADABLE /
+   * TEST_RUN_FILE_TIMEOUT / TEST_RUN_EXEC_FAILED / TEST_RUN_RESULTS_MALFORMED /
+   * TEST_RUN_GLOBAL_TIMEOUT）由 respondError 统一映射为 400 HUB_PACK_ERROR +
+   * details.packCode；注意"测试用例断言失败"不是路由错误——那是报告里的
+   * failed / errored 计数，路由照样 200。
+   * @param req 进入的请求
+   * @param res 目标响应
+   */
+  private async handleTestRun(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.readJsonBody(req, res);
+    if (body === undefined) {
+      return;
+    }
+    const root = requireString(body, "root");
+    const targetGuid = optionalString(body, "targetGuid");
+    const timeoutMs = optionalPositiveNumber(body, "timeoutMs");
+    const bail = optionalBoolean(body, "bail");
+    const bundle = optionalBoolean(body, "bundle");
+    const include = optionalStringArray(body, "include");
+
+    const discovered = await discoverTests({
+      root,
+      ...(include !== undefined ? { include } : {}),
+    });
+    // targetGuid / timeoutMs 是全局覆盖值：给了就覆盖每个发现条目（否则用 pack.yaml
+    // tests 段 / 内置缺省值——由 discoverTests 已经算好）
+    const files = discovered.map((entry) => ({
+      ...entry,
+      ...(targetGuid !== undefined ? { targetGuid } : {}),
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    }));
+
+    const runner = new TestRunner(this.daemon.server);
+    const report = await runner.run({
+      root,
+      files,
+      server: this.daemon.server, // 坑 17：复用 hub 已绑定的编辑器端口，绝不二次绑定
+      ...(bundle !== undefined ? { bundle } : {}),
+      ...(bail !== undefined ? { bail } : {}),
+    });
+    sendJson(res, 200, report);
+  }
+
+  /**
+   * POST /v1/pack/build：图包工作区 → 存档 JSON → 工坊上传用 BSON 载荷（阶段 7）。
+   *
+   * 纯本地文件流水线，**不依赖 daemon.server**（不碰 39998 / 39999）：
+   * 1. {@link buildSave}：工作区 → TTS 存档 JSON（缺省
+   *    `<root>/dist/<净化(pack.yaml name)>.json`；dryRun 只统计不写盘）；
+   * 2. {@link buildBson}：JSON → BSON（内部自检"前 4 字节小端整数 == 文件大小"）；
+   *    dryRun=true 时跳过本步——没有产物就不做自检，也不虚报字节数。
+   *
+   * outPath 语义：**输出 BSON 载荷路径**（中间 JSON 走 buildSave 自己的缺省命名）；
+   * 缺省与 JSON 同目录同名、扩展名换成 .bson（与 CLI `tts build -o` /
+   * `tts publish --bson` 的缺省推导口径一致）。
+   *
+   * 响应体：BsonBuildResult 三字段 `{outPath, byteLength, headerLength}`
+   * （自检保证后两者相等）追加诊断字段 `dryRun` / `jsonPath` / `warnings[]` /
+   * `scriptsReplaced` / `uiReplaced` / `objectsReplaced` / `decksPatched`；
+   * dryRun=true 时 byteLength / headerLength 恒为 0（未生成载荷）。
+   *
+   * 业务失败（PackError：SKELETON_MISSING / SKELETON_INVALID / GUID_MISMATCH /
+   * BUILD_FAILED / PUBLISH_JSON_NOT_FOUND / PUBLISH_JSON_INVALID /
+   * PUBLISH_BSON_INVALID / PUBLISH_OUTPUT_EXISTS）由 respondError 统一映射为
+   * 400 HUB_PACK_ERROR + details.packCode。
+   * @param req 进入的请求
+   * @param res 目标响应
+   */
+  private async handlePackBuild(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.readJsonBody(req, res);
+    if (body === undefined) {
+      return;
+    }
+    const root = requireString(body, "root");
+    const outPath = optionalString(body, "outPath");
+    const dryRun = optionalBoolean(body, "dryRun") ?? false;
+
+    const build = await buildSave({ root, dryRun });
+    const jsonPath = build.outPath;
+    const bsonPath =
+      outPath !== undefined
+        ? path.resolve(outPath)
+        : path.join(path.dirname(jsonPath), `${path.basename(jsonPath).replace(/\.json$/i, "")}.bson`);
+
+    const response: Record<string, unknown> = {
+      // BsonBuildResult 三字段（dryRun 下 outPath 是"将写入"的路径，字节数为 0）
+      outPath: bsonPath,
+      byteLength: 0,
+      headerLength: 0,
+      // 诊断字段（附加，不属于 BsonBuildResult 的核心契约）
+      dryRun,
+      jsonPath,
+      warnings: build.warnings,
+      scriptsReplaced: build.scriptsReplaced,
+      uiReplaced: build.uiReplaced,
+      objectsReplaced: build.objectsReplaced,
+      decksPatched: build.decksPatched,
+    };
+    if (!dryRun) {
+      const bson = await buildBson({ jsonPath, outPath: bsonPath });
+      response.outPath = bson.outPath;
+      response.byteLength = bson.byteLength;
+      response.headerLength = bson.headerLength;
+    }
+    sendJson(res, 200, response);
   }
 
   /**

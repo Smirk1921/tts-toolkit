@@ -30,7 +30,9 @@ import { HubClient, probeHub } from "../mcp/client.js";
  * @throws 不抛错（probeHub 零异常；HubClient 构造只做字符串拼接）
  */
 export async function tryHubClient(): Promise<HubClient | null> {
-  const probed = await probeHub();
+  // Windows 下 Node 全局 fetch 首次连接 127.0.0.1 实测需要 ~1.5s（窗口 G / Stage D 实测），
+  // probeHub 默认 800ms 会误判；CLI 委托判定放宽到 3s——代价只是 hub 真不在线时多等 2s。
+  const probed = await probeHub({ timeoutMs: 3000 });
   if (probed === null) {
     return null;
   }

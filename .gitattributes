@@ -1,0 +1,4 @@
+# 夹具文件字节必须保留（archive-ttsmod.test.ts:243 Buffer.compare === 0）
+# 禁止 git autocrlf 改动它们
+tests/fixtures/**/*.ttsmod -text
+tests/fixtures/extracted/** -text

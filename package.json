@@ -45,6 +45,7 @@
     "dev": "tsx src/cli/index.ts",
     "test": "vitest run",
     "test:integration": "vitest run tests/integration",
+    "make-fixture": "node scripts/make-fixture.mjs",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

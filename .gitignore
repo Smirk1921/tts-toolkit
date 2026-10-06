@@ -7,4 +7,6 @@ steam_appid.txt
 .stage-d/
 *.tsbuildinfo
 kp_steam*.log
-tests/fixtures/
+# tests/fixtures/ 已入库（v8-2 自制匿名化夹具，3 个 .ttsmod + extracted/ 共 ~21KB）。
+# 仅当维护者在本机放置原始大型真实样本时才需要排除（可选子目录，不入库）。
+tests/fixtures/original/

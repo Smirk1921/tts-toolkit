@@ -1,0 +1,56 @@
+# ci.yml — PR 门禁：build + test（窗口 v8-1a，施工方案-v0.8.0 §四）
+#
+# 两条故意约束（不要"修"掉）：
+# 1) 故意不设 TTS_FIXTURE_DIR / TTS_EXTRACTED_DIR：13 个依赖真实夹具的用例
+#    （archive-cachekey 5 + archive-ttsmod 7 + pack-unpack 1）在 CI 上继续 skip，
+#    CI 基线固定为 2024 passed / 82 skipped。自制夹具由 v8-2 窗口引入，且仅用于本地。
+# 2) npm test 连跑 3 次：防御 Windows 下 git 子进程清理慢导致的 EBUSY 偶发
+#    （见 vitest.config.ts 头注与项目记忆 workflow-vitest-loop-pitfall）。
+name: CI
+
+on:
+  pull_request:
+
+env:
+  CI: true
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # package.json 无 packageManager 字段，corepack 对 npm 无效；
+      # 显式装 npm 11.9.0（Node 24.19.0 捆绑版本），保证 npm ci 行为可复现。
+      - name: Pin npm
+        run: npm install -g npm@11.9.0
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test (3 consecutive runs, EBUSY guard)
+        shell: bash
+        run: |
+          set -e
+          for i in 1 2 3; do
+            echo "=== npm test run $i/3 ==="
+            npm test
+          done
+
+      # 防御性占位：当前 `vitest run` 不产出 .test-report/report.json
+      # （vitest.config.ts 未配置 reporter/outputFile），此步骤今日必跳过；
+      # 未来若加 reporter 即自动生效。失败时上传便于排查。
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: .test-report/report.json
+          if-no-files-found: ignore

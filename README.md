@@ -1,5 +1,7 @@
 # tts-toolkit
 
+[![CI](https://github.com/Smirk1921/tts-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Smirk1921/tts-toolkit/actions/workflows/ci.yml)
+
 > **English** — A comprehensive toolchain for Tabletop Simulator mod creators: pack
 > workspace, atlas slicing/stitching, git-based version control, hub daemon, MCP
 > integration, Lua test runner, and Steam Workshop publishing.

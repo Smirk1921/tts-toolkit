@@ -5,9 +5,9 @@
  * 往返目标（施工流程 3B 组）：
  * - **正向**：本工具产出的 `.ttsmod` 能被第三方 ZIP 读取器读取——用本机 pwsh
  *   调 .NET `System.IO.Compression.ZipFile`（与 TTS Mod Vault 同族解析器）实测；
- * - **反向**：用本工具导入 `D:\工具\TTS\research\` 下 3 个真实 `.ttsmod` 样本
- *   （仓库内参考资料副本，md5 一致）全部成功；样本字节经 readZip 解压后与
- *   预先解包的 `research\x\` 目录逐字节一致。
+ * - **反向**：用本工具导入 3 份第三方真实 `.ttsmod` 样本（**仓库不自带**，见
+ *   下方"夹具获取"）全部成功；样本字节经 readZip 解压后与预先解包的目录
+ *   逐字节一致。
  *
  * 覆盖面：
  * - ZIP 编解码：store/deflate 往返、非 ASCII 条目名（UTF-8 标志位）、确定性输出、
@@ -20,12 +20,20 @@
  *   zip-slip 防护、manifest 回读。
  *
  * 全程离线：扩展名推导第 3 级的探测函数一律注入假实现，绝不联网。
+ *
+ * 夹具获取：
+ * - 设环境变量 `TTS_FIXTURE_DIR` 指向含 `s_dial.ttsmod` / `s_hex.ttsmod` /
+ *   `sample_diceset.ttsmod` 的目录；或
+ * - 在 `<repo>/tests/fixtures/` 下手动放置样本（目录已 gitignore）。
+ * 期望与样本逐字节一致的"预先解包目录"，用环境变量 `TTS_EXTRACTED_DIR` 指定；
+ * 未设置时跳过对应字节比对（ZIP 读写其余用例不受影响）。
  */
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -37,15 +45,24 @@ import { initI18n } from '../../src/i18n/index.js';
 
 const execFileP = promisify(execFile);
 
-/**
- * 真实夹具（仓库外参考资料 `D:\工具\TTS\research\` 的副本，md5 一致，见夹具 README）
- * 与其预先解包的目录（research\x\）：
- * - s_dial.ttsmod：51 条目（Mods/Images ×1 + Mods/Models ×48 + Workshop json + 缩略图）；
- * - s_hex.ttsmod：4 条目（工坊存档是 .cjc 后缀）；
- * - sample_diceset.ttsmod：13 条目（Mods/Models ×11 + Workshop json + 缩略图）。
- */
-const FIXTURE_DIR = 'D:/Codex/TTS图包制作维护工具/参考资料/测试夹具';
-const EXTRACTED_DIR = 'D:/工具/TTS/research/x';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const FIXTURE_DIR_CANDIDATES = [
+  process.env.TTS_FIXTURE_DIR,
+  path.resolve(__dirname, '..', 'fixtures'),
+].filter((p): p is string => typeof p === 'string' && p.length > 0);
+
+const FIXTURE_DIR: string | undefined = FIXTURE_DIR_CANDIDATES.find((p) =>
+  existsSync(path.join(p, 's_dial.ttsmod')),
+);
+
+const EXTRACTED_DIR: string | undefined = process.env.TTS_EXTRACTED_DIR;
+
+/** 依赖真实夹具的 describe：无夹具时自动 skip */
+const describeFixture = FIXTURE_DIR ? describe : describe.skip;
+
+/** 依赖预先解包参照目录的 describe：未设 TTS_EXTRACTED_DIR 或无夹具时自动 skip */
+const describeExtracted = EXTRACTED_DIR && FIXTURE_DIR ? describe : describe.skip;
 
 /** 每个用例独立的临时根目录 */
 let tempRoot: string;
@@ -199,7 +216,7 @@ describe('正向互操作：本工具产物可被 .NET ZipFile 读取（pwsh）'
 // 反向互操作：读取 3 个真实 .ttsmod 样本
 // ---------------------------------------------------------------------------
 
-describe('反向互操作：readZip 读取 3 个真实样本', () => {
+describeFixture('反向互操作：readZip 读取 3 个真实样本', () => {
   const samples = [
     { file: 's_dial.ttsmod', count: 51, workshopJson: 'Mods/Workshop/882532068.json' },
     { file: 's_hex.ttsmod', count: 4, workshopJson: 'Mods/Workshop/333845772.cjc' },
@@ -207,7 +224,7 @@ describe('反向互操作：readZip 读取 3 个真实样本', () => {
   ] as const;
 
   it.each(samples)('$file：$count 条目、工坊存档与缩略图齐全', async ({ file, count, workshopJson }) => {
-    const zip = readZip(await readFile(path.join(FIXTURE_DIR, file)));
+    const zip = readZip(await readFile(path.join(FIXTURE_DIR!, file)));
     expect(zip).toHaveLength(count);
     expect(zip.some((e) => e.name === workshopJson)).toBe(true);
     const thumbnail = workshopJson.replace('.json', '.png').replace('.cjc', '.png');
@@ -215,25 +232,25 @@ describe('反向互操作：readZip 读取 3 个真实样本', () => {
     expect(zip.every((e) => e.name.startsWith('Mods/'))).toBe(true);
   });
 
-  it('sample_diceset：解压字节与预先解包的 research\\x\\ 目录逐字节一致（JSON 与 store 的 PNG）', async () => {
-    // research\x\ 是 sample_diceset.ttsmod 的预先解包目录（379104394）
-    const zip = readZip(await readFile(path.join(FIXTURE_DIR, 'sample_diceset.ttsmod')));
-    const jsonEntry = zip.find((e) => e.name === 'Mods/Workshop/379104394.json')!;
-    const pngEntry = zip.find((e) => e.name === 'Mods/Workshop/Thumbnails/379104394.png')!;
-    const jsonOnDisk = await readFile(path.join(EXTRACTED_DIR, 'Mods', 'Workshop', '379104394.json'));
-    const pngOnDisk = await readFile(path.join(EXTRACTED_DIR, 'Mods', 'Workshop', 'Thumbnails', '379104394.png'));
-    expect(Buffer.compare(Buffer.from(jsonEntry.data), jsonOnDisk)).toBe(0);
-    expect(Buffer.compare(Buffer.from(pngEntry.data), pngOnDisk)).toBe(0);
-    // 素材（deflate 压缩的 .obj）同样逐字节一致
-    const objEntry = zip.find((e) => e.name === 'Mods/Models/httppastebincomrawphpirkZ3Fkt7.obj')!;
-    const objOnDisk = await readFile(path.join(EXTRACTED_DIR, 'Mods', 'Models', 'httppastebincomrawphpirkZ3Fkt7.obj'));
-    expect(Buffer.compare(Buffer.from(objEntry.data), objOnDisk)).toBe(0);
-  });
-
   it('样本条目名 = sanitize(url) + 固定扩展名（模型 .obj 无条件追加）', async () => {
-    const zip = readZip(await readFile(path.join(FIXTURE_DIR, 's_dial.ttsmod')));
+    const zip = readZip(await readFile(path.join(FIXTURE_DIR!, 's_dial.ttsmod')));
     // URL 以 .obj 结尾，TTS 仍无条件再追加 .obj（实测条目 ...MSHobj.obj）
     expect(zip.some((e) => e.name === `Mods/Models/${cacheFileName('https://raw.githubusercontent.com/DasUmlaut/TTSLibrary/master/dials/dial-12-0_00.MSH.obj', 'obj')}`)).toBe(true);
+  });
+});
+
+describeExtracted('反向互操作：与预先解包参照目录逐字节一致', () => {
+  it('sample_diceset：解压字节与预先解包目录逐字节一致（JSON / PNG / OBJ）', async () => {
+    const zip = readZip(await readFile(path.join(FIXTURE_DIR!, 'sample_diceset.ttsmod')));
+    const jsonEntry = zip.find((e) => e.name === 'Mods/Workshop/379104394.json')!;
+    const pngEntry = zip.find((e) => e.name === 'Mods/Workshop/Thumbnails/379104394.png')!;
+    const jsonOnDisk = await readFile(path.join(EXTRACTED_DIR!, 'Mods', 'Workshop', '379104394.json'));
+    const pngOnDisk = await readFile(path.join(EXTRACTED_DIR!, 'Mods', 'Workshop', 'Thumbnails', '379104394.png'));
+    expect(Buffer.compare(Buffer.from(jsonEntry.data), jsonOnDisk)).toBe(0);
+    expect(Buffer.compare(Buffer.from(pngEntry.data), pngOnDisk)).toBe(0);
+    const objEntry = zip.find((e) => e.name === 'Mods/Models/httppastebincomrawphpirkZ3Fkt7.obj')!;
+    const objOnDisk = await readFile(path.join(EXTRACTED_DIR!, 'Mods', 'Models', 'httppastebincomrawphpirkZ3Fkt7.obj'));
+    expect(Buffer.compare(Buffer.from(objEntry.data), objOnDisk)).toBe(0);
   });
 });
 
@@ -607,7 +624,7 @@ describe('exportTtsmod manifest（3B.4）与 README（3B.9）', () => {
 // 导入：importTtsmod
 // ---------------------------------------------------------------------------
 
-describe('importTtsmod：3 个真实样本全部导入成功（反向往返）', () => {
+describeFixture('importTtsmod：3 个真实样本全部导入成功（反向往返）', () => {
   const samples = [
     { file: 's_dial.ttsmod', files: 51, workshopJson: 'Mods/Workshop/882532068.json' },
     { file: 's_hex.ttsmod', files: 4, workshopJson: 'Mods/Workshop/333845772.cjc' },
@@ -617,7 +634,7 @@ describe('importTtsmod：3 个真实样本全部导入成功（反向往返）',
   it.each(samples)('$file：$files 个文件全部落地，不覆盖、manifest 如实缺省', async ({ file, files, workshopJson }) => {
     const modsParent = path.join(tempRoot, 'tts-root');
     const saves = path.join(tempRoot, 'save-location');
-    const result = await importTtsmod(path.join(FIXTURE_DIR, file), { modsParentDir: modsParent, modSaveLocation: saves });
+    const result = await importTtsmod(path.join(FIXTURE_DIR!, file), { modsParentDir: modsParent, modSaveLocation: saves });
     expect(result.totalEntries).toBe(files);
     expect(result.extracted).toBe(files);
     expect(result.skippedExisting).toHaveLength(0);
@@ -632,7 +649,7 @@ describe('importTtsmod：3 个真实样本全部导入成功（反向往返）',
     expect(result.warnings).toHaveLength(0);
 
     // 二次导入：已存在的文件一律不覆盖（原工具 DoNotOverwrite 语义），逐条列出
-    const again = await importTtsmod(path.join(FIXTURE_DIR, file), { modsParentDir: modsParent, modSaveLocation: saves });
+    const again = await importTtsmod(path.join(FIXTURE_DIR!, file), { modsParentDir: modsParent, modSaveLocation: saves });
     expect(again.extracted).toBe(0);
     expect(again.skippedExisting).toHaveLength(files);
     expect(again.warnings.length).toBe(files + 1); // 汇总 1 + 逐条 files

@@ -1,6 +1,9 @@
 {
   "name": "tts-toolkit",
-  "version": "0.1.0",
+  "version": "0.7.0",
+  "description": "Toolchain for Tabletop Simulator mod creators: pack workspace, atlas slicing, git-based version control, hub daemon, MCP integration, Lua test runner, and Steam Workshop publishing.",
+  "author": "Smirk1921",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "tts": "./dist/cli/index.js",
@@ -10,11 +13,39 @@
   "engines": {
     "node": ">=24.19.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Smirk1921/tts-toolkit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Smirk1921/tts-toolkit/issues"
+  },
+  "homepage": "https://github.com/Smirk1921/tts-toolkit#readme",
+  "keywords": [
+    "tabletop-simulator",
+    "tts",
+    "lua",
+    "workshop",
+    "mod-tools",
+    "mcp",
+    "cli",
+    "card-game",
+    "board-game"
+  ],
+  "files": [
+    "dist",
+    "locales",
+    "docs/schemas",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "tsc -p .",
     "dev": "tsx src/cli/index.ts",
     "test": "vitest run",
-    "test:integration": "vitest run tests/integration"
+    "test:integration": "vitest run tests/integration",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.3.0",

@@ -5,7 +5,7 @@
  * 两条通路（语义一致，本模块自动选路）：
  * - CLI：`python <approvalRoot>/agent.py --config <configPath> [--offline] <子命令> …`
  *   ——每次调用输出**一个 JSON 对象**（stdout），失败时 `{"ok": false, "error": …}`
- *   且退出码非 0（实测 agent.py main()，D:/Codex/图包审批工具/agent.py:393）；
+ *   且退出码非 0（实测 agent.py main() 行为）；
  * - HTTP：服务在跑时走 `<base>/api/agent/*`（与网页版共用同一份内存状态，
  *   端点清单见其 docs/agent-接口.md §四）。
  *
@@ -110,7 +110,7 @@ export type CliRunner = (python: string, argv: string[]) => Promise<CliRunResult
 
 /** {@link ApprovalClient} 的选项 */
 export interface ApprovalClientOptions {
-  /** 审批工具仓库根（含 agent.py；如 `D:\Codex\图包审批工具`） */
+  /** 审批工具仓库根（含 agent.py；如 `<approval_tool_root>`） */
   approvalRoot: string;
   /** approval.config.json 路径（探测与 CLI 都需要读它拿 data_dir / host / port） */
   configPath: string;
@@ -296,7 +296,7 @@ function withQuery(
  * 用法：
  * ```ts
  * const client = new ApprovalClient({
- *   approvalRoot: "D:/Codex/图包审批工具",
+ *   approvalRoot: "<approval_tool_root>",
  *   configPath: "<packRoot>/.tts/approval/approval.config.json",
  * });
  * const status = await client.status();          // AgentResult

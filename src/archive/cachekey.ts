@@ -14,7 +14,7 @@
  * 规则（已实测钉死）：
  * - `sanitize(url)` = url 去掉所有**非 ASCII 字母数字**字符（`[^A-Za-z0-9]`），
  *   大小写原样保留；
- * - 验证依据（真实 `.ttsmod` 样本，`D:\工具\TTS\research\`，实测日期 2026-10-04）：
+ * - 验证依据（3 份真实 `.ttsmod` 样本，实测日期 2026-10-04）：
  *   · `https://raw.githubusercontent.com/DasUmlaut/TTSLibrary/master/dials/dial-12-0.jpg`
  *     → `Mods/Images/httpsrawgithubusercontentcomDasUmlautTTSLibrarymasterdialsdial120jpg.jpg`
  *     （s_dial.ttsmod 实测条目：大小写保留、`-` `/` `:` `.` 全部去除）；

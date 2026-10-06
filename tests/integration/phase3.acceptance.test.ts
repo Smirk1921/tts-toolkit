@@ -26,9 +26,9 @@
  *    `--config` 覆盖入口（`src/host/command.ts:363-366` 的默认路径；`resolveHost` 只认
  *    `listHosts()` 的结果）。测试自身**不修改用户全局配置**：场景 5/10 在配置里找不到
  *    可用图床时应 `console.warn` 后跳过对应断言，而不是写用户的配置；
- * 4. 场景 8 需要 `D:\工具\TTS\research\` 下的 3 个真实样本（s_dial.ttsmod / s_hex.ttsmod /
- *    sample_diceset.ttsmod）；场景 9 需要 `git`；场景 12 的 `status` 需要审批工具仓库
- *    （含 agent.py）或运行中的审批服务（gate 本身只读文件，不需要）。
+ * 4. 场景 8 需要 3 份第三方真实样本（s_dial.ttsmod / s_hex.ttsmod /
+ *    sample_diceset.ttsmod，仓库不自带）；场景 9 需要 `git`；场景 12 的 `status`
+ *    需要审批工具仓库（含 agent.py）或运行中的审批服务（gate 本身只读文件，不需要）。
  *
  * 断言口径：
  * - CLI 进程出口 = stdout 摘要（t() 文案，单行）/ stderr 错误 / exitCode；
@@ -496,8 +496,8 @@ describe("阶段 3 集成验收：素材导入 + 图床 + 打包分发", () => {
   });
 
   it.skip("场景 8：tts pack import 真实样本（3 个 .ttsmod）", async () => {
-    // TODO(Stage 3)：夹具 = D:\工具\TTS\research\ 下的 s_dial.ttsmod / s_hex.ttsmod /
-    // sample_diceset.ttsmod（**只读**；测试不修改样本本身）。对每个样本：
+    // TODO(Stage 3)：夹具 = 3 份第三方真实样本（s_dial.ttsmod / s_hex.ttsmod /
+    // sample_diceset.ttsmod，仓库不自带；**只读**；测试不修改样本本身）。对每个样本：
     // 1) `tts pack import <样本> --into <work>/restore` → exitCode 0；
     //    stdout 含 cli.pack.importFile.done {file, into, extracted, total}；
     //    - 解压位置正确：`Mods/...` 条目落在 <work>/restore/Mods/...（into 是 Mods 的
@@ -505,7 +505,7 @@ describe("阶段 3 集成验收：素材导入 + 图床 + 打包分发", () => {
     //      （src/cli/commands/pack.ts:859-886）；
     //    - 逐个条目对照 readZip 的清单确认文件真实存在；
     //    - sample_diceset.ttsmod 的 11 个对象 / 旧版 .cjc 结构按实际样本断言（原工具
-    //      反编译参考在 D:\工具\TTS\research\decompiled）。
+    //      反编译参考另存）。
     // 2) 不覆盖：紧接再导入一次 → stdout 含 cli.pack.importFile.skippedExisting {count}
     //    与逐条 skippedExistingItem；**文件 mtime / 内容不变**（src/archive/ttsmod.ts:1160-1171）。
     // 3) 不安全条目不逃逸：构造一个 ZIP（writeZip 即可）含 `../evil.txt`、`/abs.txt`、
@@ -582,9 +582,9 @@ describe("阶段 3 集成验收：素材导入 + 图床 + 打包分发", () => {
   });
 
   it.skip("场景 12：review status 调审批工具（HTTP / python 选路）", async () => {
-    // TODO(Stage 3)：需要审批工具环境（`D:\Codex\图包审批工具` 含 agent.py，或服务在跑）：
+    // TODO(Stage 3)：需要审批工具环境（含 agent.py 的 approval-tool 仓库，或服务在跑）：
     // 1) 用场景 11 的 approval.config.json；`tts review status --pack <work>/pack
-    //    --approval-root "D:\Codex\图包审批工具"` → exitCode 0，stdout 是 agent 返回的
+    //    --approval-root "<approval_tool_root>"` → exitCode 0，stdout 是 agent 返回的
     //    JSON（机器可读、**不翻译**；字段语义见审批工具 docs/agent-接口.md）；
     // 2) `--offline` 强制 CLI 直连文件（给 agent.py 传 --offline）；`--server http://127.0.0.1:8765`
     //    时不需要 python（此时可省 --approval-root）；两者都给且缺 --approval-root →

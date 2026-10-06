@@ -6,19 +6,26 @@
  * - 正常路径：.json 输入与 .ttsmod 输入的工作区布局、脚本 / UI 命名（与
  *   tts pull 一致）、deck.yaml 骨架、pack.yaml（lfs=disabled-no-lfs）、
  *   骨架存档保真（约束 8）、git init 与 skipGit；
- * - 真实夹具（仓库外参考资料 sample_diceset.ttsmod，工坊原包）：钉住空 GUID
- *   对象（原包尚未进游戏存档，GUID 全为空串）的落盘行为——主干退化为净化名、
- *   重名（两个 D8）追加 ".2" 去重、data.json 如实保留空 GUID；
+ * - 真实夹具（**仓库不自带**，sample_diceset.ttsmod 来自 Steam 工坊，见下方
+ *   "夹具获取"）：钉住空 GUID 对象（原包尚未进游戏存档，GUID 全为空串）的
+ *   落盘行为——主干退化为净化名、重名（两个 D8）追加 ".2" 去重、data.json
+ *   如实保留空 GUID；
  * - 异常路径：按 PackError.code（机器可读）断言，不依赖错误文案——
  *   文案走 t()，locales/*.json 由 Run 2 补齐，补齐前后 message 不同；
  * - 关键回归点：骨架存档不得含 readSave 的 ">>floating-point<<" 包装
  *   （unpack.ts 模块头注释的取舍 1）。
+ *
+ * 夹具获取：
+ * - 设环境变量 `TTS_FIXTURE_DIR` 指向含 `sample_diceset.ttsmod` 的目录；或
+ * - 在 `<repo>/tests/fixtures/` 下手动放置样本（目录已 gitignore）。
+ * 两者皆无时，依赖真实夹具的 describe 自动 skip，合成存档用例不受影响。
  */
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -29,13 +36,19 @@ import { unpackSave } from '../../src/pack/unpack.js';
 
 const execFileP = promisify(execFile);
 
-/**
- * 真实夹具（仓库外的参考资料，不在 git 内）：Steam 创意工坊原包。
- * 实测内容：SaveName="Custom Dice Set"；全局 LuaScript / XmlUI 为空串；
- * 11 个 Custom_Model 对象 GUID 均为空串（未进过游戏存档）、无脚本 / UI、
- * 无牌堆；其中两个 Nickname 同为 "D8"；ZIP 内含 Mods/Models/*.obj × 11。
- */
-const REAL_FIXTURE_PATH = 'D:/Codex/TTS图包制作维护工具/参考资料/测试夹具/sample_diceset.ttsmod';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const FIXTURE_DIR_CANDIDATES = [
+  process.env.TTS_FIXTURE_DIR,
+  path.resolve(__dirname, '..', 'fixtures'),
+].filter((p): p is string => typeof p === 'string' && p.length > 0);
+
+const REAL_FIXTURE_PATH: string | undefined = FIXTURE_DIR_CANDIDATES.map((p) =>
+  path.join(p, 'sample_diceset.ttsmod'),
+).find((p) => existsSync(p));
+
+/** 依赖真实夹具的 describe：无夹具时自动 skip */
+const describeFixture = REAL_FIXTURE_PATH ? describe : describe.skip;
 
 // ---------------------------------------------------------------------------
 // 临时目录管理
@@ -264,11 +277,11 @@ describe('unpackSave（.ttsmod 输入）', () => {
   }, 60_000);
 });
 
-describe('unpackSave（真实夹具 sample_diceset.ttsmod）', () => {
+describeFixture('unpackSave（真实夹具 sample_diceset.ttsmod）', () => {
   it('解包工坊原包：骨架存档保真、objects/ 子目录齐全、空 GUID 重名对象去重、模型进 source/models', async () => {
     // 复制夹具到临时目录（不改动参考资料原件），按约定 skipGit
     const modPath = path.join(tempRoot, 'sample_diceset.ttsmod');
-    await copyFile(REAL_FIXTURE_PATH, modPath);
+    await copyFile(REAL_FIXTURE_PATH!, modPath);
     const outDir = path.join(tempRoot, 'pack');
     const result = await unpackSave({ savePath: modPath, outDir, skipGit: true });
 

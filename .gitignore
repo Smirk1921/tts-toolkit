@@ -4,3 +4,7 @@ dist/
 .DS_Store
 .tts/skeleton.json
 steam_appid.txt
+.stage-d/
+*.tsbuildinfo
+kp_steam*.log
+tests/fixtures/

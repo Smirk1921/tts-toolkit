@@ -5,9 +5,8 @@
  * 往返目标（施工流程 3B 组）：
  * - **正向**：本工具产出的 `.ttsmod` 能被第三方 ZIP 读取器读取——用本机 pwsh
  *   调 .NET `System.IO.Compression.ZipFile`（与 TTS Mod Vault 同族解析器）实测；
- * - **反向**：用本工具导入 3 份第三方真实 `.ttsmod` 样本（**仓库不自带**，见
- *   下方"夹具获取"）全部成功；样本字节经 readZip 解压后与预先解包的目录
- *   逐字节一致。
+ * - **反向**：用本工具导入 3 份第三方真实 `.ttsmod` 样本全部成功；样本字节经
+ *   readZip 解压后与预先解包的目录逐字节一致。
  *
  * 覆盖面：
  * - ZIP 编解码：store/deflate 往返、非 ASCII 条目名（UTF-8 标志位）、确定性输出、
@@ -21,12 +20,17 @@
  *
  * 全程离线：扩展名推导第 3 级的探测函数一律注入假实现，绝不联网。
  *
- * 夹具获取：
- * - 设环境变量 `TTS_FIXTURE_DIR` 指向含 `s_dial.ttsmod` / `s_hex.ttsmod` /
- *   `sample_diceset.ttsmod` 的目录；或
- * - 在 `<repo>/tests/fixtures/` 下手动放置样本（目录已 gitignore）。
- * 期望与样本逐字节一致的"预先解包目录"，用环境变量 `TTS_EXTRACTED_DIR` 指定；
- * 未设置时跳过对应字节比对（ZIP 读写其余用例不受影响）。
+ * 夹具获取（v8-2 起已入库）：
+ * - 仓库自带 `tests/fixtures/{s_dial,s_hex,sample_diceset}.ttsmod`——由
+ *   `scripts/make-fixture.mjs` 从真实样本裁剪 + 匿名化生成，**已入库**，
+ *   git clone 即得，无需额外操作；
+ * - 预先解包目录 `tests/fixtures/extracted/` 同样**已入库**，作为
+ *   `TTS_EXTRACTED_DIR` 的指向（字节比对用）；
+ * - 如需重新生成（仅维护者本机）：`npm run make-fixture`
+ *   （依赖 D:\工具\TTS\research\ 私有真实样本，贡献者无需跑）；
+ * - 也可用环境变量 `TTS_FIXTURE_DIR` / `TTS_EXTRACTED_DIR` 覆盖默认路径。
+ * 候选目录里无 `s_dial.ttsmod` 时，依赖真实夹具的用例自动 skip；
+ * `TTS_EXTRACTED_DIR` 未设置时，仅字节比对该 1 个用例 skip，其余不受影响。
  */
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';

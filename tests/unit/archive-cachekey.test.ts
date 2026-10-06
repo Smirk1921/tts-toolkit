@@ -7,15 +7,19 @@
  * 靠文件名命中本地缓存），错一个字符接收方就命中不了缓存。
  *
  * 验证策略（全部用真实 URL 钉死）：
- * - 3 份第三方真实 `.ttsmod` 样本（**仓库不自带**，见下方"夹具获取"）里的实测
- *   条目名作为金标准：`sanitize(url) + 扩展名` 必须与样本里的条目名 **逐字符相等**；
+ * - 3 份第三方真实 `.ttsmod` 样本里的实测条目名作为金标准：
+ *   `sanitize(url) + 扩展名` 必须与样本里的条目名 **逐字符相等**；
  * - 直接读真实样本 ZIP，断言「已知 URL 算出的条目名」确实出现在样本条目里；
  * - 字符类全覆盖 + 幂等性 + 非法输入边界的纯函数行为。
  *
- * 夹具获取：
- * - 设环境变量 `TTS_FIXTURE_DIR` 指向含 `s_dial.ttsmod` 等样本的目录；或
- * - 在 `<repo>/tests/fixtures/` 下手动放置样本（目录已 gitignore）。
- * 两者皆无时，依赖真实夹具的用例自动 skip，纯函数测试不受影响。
+ * 夹具获取（v8-2 起已入库）：
+ * - 仓库自带 `tests/fixtures/{s_dial,s_hex,sample_diceset}.ttsmod`——由
+ *   `scripts/make-fixture.mjs` 从真实样本裁剪 + 匿名化生成，**已入库**，
+ *   git clone 即得，无需额外操作；
+ * - 如需重新生成（仅维护者本机）：`npm run make-fixture`
+ *   （依赖 D:\工具\TTS\research\ 私有真实样本，贡献者无需跑）；
+ * - 也可用环境变量 `TTS_FIXTURE_DIR` 指向其他夹具目录覆盖默认路径。
+ * 候选目录里无 `s_dial.ttsmod` 时，依赖真实夹具的用例自动 skip，纯函数测试不受影响。
  */
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';

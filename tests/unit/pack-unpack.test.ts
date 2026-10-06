@@ -6,19 +6,23 @@
  * - 正常路径：.json 输入与 .ttsmod 输入的工作区布局、脚本 / UI 命名（与
  *   tts pull 一致）、deck.yaml 骨架、pack.yaml（lfs=disabled-no-lfs）、
  *   骨架存档保真（约束 8）、git init 与 skipGit；
- * - 真实夹具（**仓库不自带**，sample_diceset.ttsmod 来自 Steam 工坊，见下方
- *   "夹具获取"）：钉住空 GUID 对象（原包尚未进游戏存档，GUID 全为空串）的
- *   落盘行为——主干退化为净化名、重名（两个 D8）追加 ".2" 去重、data.json
- *   如实保留空 GUID；
+ * - 真实夹具（v8-2 起仓库自带）：钉住空 GUID 对象（原包尚未进游戏存档，
+ *   GUID 全为空串）的落盘行为——主干退化为净化名、重名（两个 D8）追加
+ *   ".2" 去重、data.json 如实保留空 GUID；
  * - 异常路径：按 PackError.code（机器可读）断言，不依赖错误文案——
  *   文案走 t()，locales/*.json 由 Run 2 补齐，补齐前后 message 不同；
  * - 关键回归点：骨架存档不得含 readSave 的 ">>floating-point<<" 包装
  *   （unpack.ts 模块头注释的取舍 1）。
  *
- * 夹具获取：
- * - 设环境变量 `TTS_FIXTURE_DIR` 指向含 `sample_diceset.ttsmod` 的目录；或
- * - 在 `<repo>/tests/fixtures/` 下手动放置样本（目录已 gitignore）。
- * 两者皆无时，依赖真实夹具的 describe 自动 skip，合成存档用例不受影响。
+ * 夹具获取（v8-2 起已入库）：
+ * - 仓库自带 `tests/fixtures/sample_diceset.ttsmod`——由
+ *   `scripts/make-fixture.mjs` 从真实样本裁剪 + 匿名化生成，**已入库**，
+ *   git clone 即得，无需额外操作；
+ * - 如需重新生成（仅维护者本机）：`npm run make-fixture`
+ *   （依赖 D:\工具\TTS\research\ 私有真实样本，贡献者无需跑）；
+ * - 也可用环境变量 `TTS_FIXTURE_DIR` 覆盖默认路径。
+ * 候选目录里无 `sample_diceset.ttsmod` 时，依赖真实夹具的 describe 自动 skip，
+ * 合成存档用例不受影响。
  */
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';

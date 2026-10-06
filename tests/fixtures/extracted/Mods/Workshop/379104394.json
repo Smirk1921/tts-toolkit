@@ -1,0 +1,501 @@
+{
+  "SaveName": "Custom Dice Set",
+  "GameMode": "None",
+  "Gravity": 0.5,
+  "Date": "2/4/2015 1:38:58 AM",
+  "Table": "Table_Square",
+  "Sky": "Sky_Downtown",
+  "Note": "Remember to put the Raw link in the custom mesh area also",
+  "Rules": "",
+  "XmlUI": "",
+  "LuaScript": "",
+  "LuaScriptState": "",
+  "Grid": {
+    "Type": 0,
+    "Lines": false,
+    "Color": {
+      "r": 0,
+      "g": 0,
+      "b": 0
+    },
+    "Opacity": 0.75,
+    "ThickLines": false,
+    "Snapping": false,
+    "Offset": false,
+    "BothSnapping": false,
+    "xSize": 2,
+    "ySize": 2,
+    "PosOffset": {
+      "x": 0,
+      "y": 1,
+      "z": 0
+    }
+  },
+  "DrawImage": "iVBORw0KGgoAAAANSUhEUgAAAWAAAADQCAYAAAA53LuNAAAFFElEQVR4Ae3QgQAAAADDoPlTH+SFUGHAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgy8DQx5DAABHyNK3wAAAABJRU5ErkJggg==",
+  "ObjectStates": [
+    {
+      "Name": "Custom_Model",
+      "Transform": {
+        "posX": 5.23184061,
+        "posY": 2.009024,
+        "posZ": 4.66983652,
+        "rotX": 38.88325,
+        "rotY": 122.1961,
+        "rotZ": 35.8662758,
+        "scaleX": 3,
+        "scaleY": 3,
+        "scaleZ": 3
+      },
+      "Nickname": "D10",
+      "Description": "占位文本 47",
+      "ColorDiffuse": {
+        "r": 0.9999999,
+        "g": 0.9999999,
+        "b": 0.9999999
+      },
+      "Locked": false,
+      "Grid": false,
+      "Snap": true,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "CustomMesh": {
+        "MeshURL": "https://example.com/raw.php?i=rkZ3Fkt7",
+        "DiffuseURL": "",
+        "NormalURL": "",
+        "ColliderURL": "https://example.com/raw.php?i=rkZ3Fkt7",
+        "Convex": true,
+        "MaterialIndex": 1,
+        "TypeIndex": 2,
+        "CastShadows": true
+      },
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": ""
+    },
+    {
+      "Name": "Custom_Model",
+      "Transform": {
+        "posX": -5.43670034,
+        "posY": 1.96369207,
+        "posZ": 4.63713551,
+        "rotX": 44.7382927,
+        "rotY": 280.7328,
+        "rotZ": 82.26601,
+        "scaleX": 3,
+        "scaleY": 3,
+        "scaleZ": 3
+      },
+      "Nickname": "D3",
+      "Description": "占位文本 48",
+      "ColorDiffuse": {
+        "r": 0.9999999,
+        "g": 0.9999999,
+        "b": 0.9999999
+      },
+      "Locked": false,
+      "Grid": false,
+      "Snap": true,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "CustomMesh": {
+        "MeshURL": "https://example.com/raw.php?i=cRQyHjEH",
+        "DiffuseURL": "",
+        "NormalURL": "",
+        "ColliderURL": "https://example.com/raw.php?i=cRQyHjEH",
+        "Convex": true,
+        "MaterialIndex": 1,
+        "TypeIndex": 2,
+        "CastShadows": true
+      },
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": ""
+    },
+    {
+      "Name": "Custom_Model",
+      "Transform": {
+        "posX": -0.0345545374,
+        "posY": 1.87692738,
+        "posZ": 5.025583,
+        "rotX": -0.000007402896,
+        "rotY": 119.932457,
+        "rotZ": 0.00000573256148,
+        "scaleX": 3,
+        "scaleY": 3,
+        "scaleZ": 3
+      },
+      "Nickname": "D4",
+      "Description": "占位文本 49",
+      "ColorDiffuse": {
+        "r": 0.9999999,
+        "g": 0.9999999,
+        "b": 0.9999999
+      },
+      "Locked": false,
+      "Grid": false,
+      "Snap": true,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "CustomMesh": {
+        "MeshURL": "https://example.com/raw.php?i=DmXiatCA",
+        "DiffuseURL": "",
+        "NormalURL": "",
+        "ColliderURL": "https://example.com/raw.php?i=DmXiatCA",
+        "Convex": true,
+        "MaterialIndex": 1,
+        "TypeIndex": 2,
+        "CastShadows": true
+      },
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": ""
+    },
+    {
+      "Name": "Custom_Model",
+      "Transform": {
+        "posX": -0.18553561,
+        "posY": 2.07001352,
+        "posZ": 0.113120139,
+        "rotX": 0.059424594,
+        "rotY": 0.976181448,
+        "rotZ": 359.940552,
+        "scaleX": 3,
+        "scaleY": 3,
+        "scaleZ": 3
+      },
+      "Nickname": "D6",
+      "Description": "占位文本 50",
+      "ColorDiffuse": {
+        "r": 0.9999999,
+        "g": 0.9999999,
+        "b": 0.9999999
+      },
+      "Locked": false,
+      "Grid": false,
+      "Snap": true,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "CustomMesh": {
+        "MeshURL": "https://example.com/raw.php?i=cDn7Eum6",
+        "DiffuseURL": "",
+        "NormalURL": "",
+        "ColliderURL": "https://example.com/raw.php?i=cDn7Eum6",
+        "Convex": true,
+        "MaterialIndex": 1,
+        "TypeIndex": 2,
+        "CastShadows": true
+      },
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": ""
+    },
+    {
+      "Name": "Custom_Model",
+      "Transform": {
+        "posX": 0.149757847,
+        "posY": 2.02170038,
+        "posZ": -3.821506,
+        "rotX": 0.00006147171,
+        "rotY": 244.242371,
+        "rotZ": 305.345032,
+        "scaleX": 3,
+        "scaleY": 3,
+        "scaleZ": 3
+      },
+      "Nickname": "D8",
+      "Description": "占位文本 51",
+      "ColorDiffuse": {
+        "r": 0.9999999,
+        "g": 0.9999999,
+        "b": 0.9999999
+      },
+      "Locked": false,
+      "Grid": false,
+      "Snap": true,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "CustomMesh": {
+        "MeshURL": "https://example.com/raw.php?i=LLu0gNbd",
+        "DiffuseURL": "",
+        "NormalURL": "",
+        "ColliderURL": "https://example.com/raw.php?i=LLu0gNbd",
+        "Convex": true,
+        "MaterialIndex": 1,
+        "TypeIndex": 2,
+        "CastShadows": true
+      },
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": ""
+    },
+    {
+      "Name": "Custom_Model",
+      "Transform": {
+        "posX": -5.017256,
+        "posY": 2.24230838,
+        "posZ": -3.80527186,
+        "rotX": 350.485352,
+        "rotY": 7.267826,
+        "rotZ": 71.9028854,
+        "scaleX": 3,
+        "scaleY": 3,
+        "scaleZ": 3
+      },
+      "Nickname": "D6 Ball",
+      "Description": "占位文本 52",
+      "ColorDiffuse": {
+        "r": 0.9999999,
+        "g": 0.9999999,
+        "b": 0.9999999
+      },
+      "Locked": false,
+      "Grid": false,
+      "Snap": true,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "CustomMesh": {
+        "MeshURL": "https://example.com/raw.php?i=sWr9s80U",
+        "DiffuseURL": "",
+        "NormalURL": "",
+        "ColliderURL": "https://example.com/raw.php?i=sWr9s80U",
+        "Convex": true,
+        "MaterialIndex": 1,
+        "TypeIndex": 2,
+        "CastShadows": true
+      },
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": ""
+    },
+    {
+      "Name": "Custom_Model",
+      "Transform": {
+        "posX": -5.38377762,
+        "posY": 1.98153317,
+        "posZ": 0.403525025,
+        "rotX": 295.5107,
+        "rotY": 320.269836,
+        "rotZ": 60.2267647,
+        "scaleX": 3,
+        "scaleY": 3,
+        "scaleZ": 3
+      },
+      "Nickname": "D4 Ball",
+      "Description": "占位文本 53",
+      "ColorDiffuse": {
+        "r": 0.9999999,
+        "g": 0.9999999,
+        "b": 0.9999999
+      },
+      "Locked": false,
+      "Grid": false,
+      "Snap": true,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "CustomMesh": {
+        "MeshURL": "https://example.com/raw.php?i=eG6u1dRg",
+        "DiffuseURL": "",
+        "NormalURL": "",
+        "ColliderURL": "https://example.com/raw.php?i=eG6u1dRg",
+        "Convex": true,
+        "MaterialIndex": 1,
+        "TypeIndex": 2,
+        "CastShadows": true
+      },
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": ""
+    },
+    {
+      "Name": "Custom_Model",
+      "Transform": {
+        "posX": 5.592329,
+        "posY": 2.017769,
+        "posZ": -4.169379,
+        "rotX": 324.734955,
+        "rotY": 140.770584,
+        "rotZ": 283.282166,
+        "scaleX": 3,
+        "scaleY": 3,
+        "scaleZ": 3
+      },
+      "Nickname": "D20",
+      "Description": "占位文本 54",
+      "ColorDiffuse": {
+        "r": 0.9999999,
+        "g": 0.9999999,
+        "b": 0.9999999
+      },
+      "Locked": false,
+      "Grid": false,
+      "Snap": true,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "CustomMesh": {
+        "MeshURL": "https://example.com/raw.php?i=Jxp8B9Kq",
+        "DiffuseURL": "",
+        "NormalURL": "",
+        "ColliderURL": "https://example.com/raw.php?i=Jxp8B9Kq",
+        "Convex": true,
+        "MaterialIndex": 1,
+        "TypeIndex": 2,
+        "CastShadows": true
+      },
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": ""
+    },
+    {
+      "Name": "Custom_Model",
+      "Transform": {
+        "posX": 5.3595314,
+        "posY": 2.1291,
+        "posZ": 0.3566096,
+        "rotX": -0.000117468553,
+        "rotY": 0.81792897,
+        "rotZ": -0.0005880365,
+        "scaleX": 3,
+        "scaleY": 3,
+        "scaleZ": 3
+      },
+      "Nickname": "D12",
+      "Description": "占位文本 55",
+      "ColorDiffuse": {
+        "r": 0.9999999,
+        "g": 0.9999999,
+        "b": 0.9999999
+      },
+      "Locked": false,
+      "Grid": false,
+      "Snap": true,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "CustomMesh": {
+        "MeshURL": "https://example.com/raw.php?i=yPgXN468",
+        "DiffuseURL": "",
+        "NormalURL": "",
+        "ColliderURL": "https://example.com/raw.php?i=yPgXN468",
+        "Convex": true,
+        "MaterialIndex": 1,
+        "TypeIndex": 2,
+        "CastShadows": true
+      },
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": ""
+    },
+    {
+      "Name": "Custom_Model",
+      "Transform": {
+        "posX": -0.181120053,
+        "posY": 1.88737845,
+        "posZ": 9.147835,
+        "rotX": -0.00001927056,
+        "rotY": 290.390717,
+        "rotZ": 0.0000179935214,
+        "scaleX": 3,
+        "scaleY": 3,
+        "scaleZ": 3
+      },
+      "Nickname": "D4 Flat Top",
+      "Description": "占位文本 56",
+      "ColorDiffuse": {
+        "r": 0.9999999,
+        "g": 0.9999999,
+        "b": 0.9999999
+      },
+      "Locked": false,
+      "Grid": false,
+      "Snap": true,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "CustomMesh": {
+        "MeshURL": "https://example.com/raw.php?i=x6zWF2Pa",
+        "DiffuseURL": "",
+        "NormalURL": "",
+        "ColliderURL": "https://example.com/raw.php?i=x6zWF2Pa",
+        "Convex": true,
+        "MaterialIndex": 1,
+        "TypeIndex": 2,
+        "CastShadows": true
+      },
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": ""
+    },
+    {
+      "Name": "Custom_Model",
+      "Transform": {
+        "posX": 0.4124007,
+        "posY": 1.95755649,
+        "posZ": -8.562173,
+        "rotX": 3.240262,
+        "rotY": 0.09620389,
+        "rotZ": 0.405999929,
+        "scaleX": 3,
+        "scaleY": 3,
+        "scaleZ": 3
+      },
+      "Nickname": "D8",
+      "Description": "占位文本 57",
+      "ColorDiffuse": {
+        "r": 0.9999999,
+        "g": 0.9999999,
+        "b": 0.9999999
+      },
+      "Locked": false,
+      "Grid": false,
+      "Snap": true,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "CustomMesh": {
+        "MeshURL": "https://example.com/raw.php?i=sFCKDH5a",
+        "DiffuseURL": "",
+        "NormalURL": "",
+        "ColliderURL": "https://example.com/raw.php?i=sFCKDH5a",
+        "Convex": true,
+        "MaterialIndex": 1,
+        "TypeIndex": 2,
+        "CastShadows": true
+      },
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": ""
+    }
+  ],
+  "TabStates": {},
+  "VersionNumber": ""
+}

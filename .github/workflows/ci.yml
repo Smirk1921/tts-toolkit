@@ -2,8 +2,10 @@
 #
 # 两条故意约束（不要"修"掉）：
 # 1) 故意不设 TTS_FIXTURE_DIR / TTS_EXTRACTED_DIR：13 个依赖真实夹具的用例
-#    （archive-cachekey 5 + archive-ttsmod 7 + pack-unpack 1）在 CI 上继续 skip，
-#    CI 基线固定为 2024 passed / 82 skipped。自制夹具由 v8-2 窗口引入，且仅用于本地。
+#    （archive-cachekey 4 + archive-ttsmod 8 + pack-unpack 1）在 CI 上继续 skip，
+#    CI 基线固定为 2024 passed / 82 skipped。自制夹具由 v8-2 窗口引入并入库
+#    （tests/fixtures/{s_dial,s_hex,sample_diceset}.ttsmod + extracted/），
+#    仅用于本地：本地不设 TTS_EXTRACTED_DIR 基线 2036/70，设了基线 2037/69。
 # 2) npm test 连跑 3 次：防御 Windows 下 git 子进程清理慢导致的 EBUSY 偶发
 #    （见 vitest.config.ts 头注与项目记忆 workflow-vitest-loop-pitfall）。
 name: CI

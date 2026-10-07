@@ -6,6 +6,7 @@
 > 本文档描述**已实现的真实契约**，不是设想稿。发现的实现问题一律显式标注（§4.2 / §4.10 / §9 已知问题 #1），不隐去。
 > **阶段 5（写入路径）修订（2026-10-05）**：已知问题 #1（hub 运行期 pull / diff 必 500）**已修复**——`pullFromGame` / `diffWorkspace` 增加 `server?: EditorServer` 注入，hub 路由传 `daemon.server` 复用已绑定的 39998（§4.2 / §4.10）；`POST /v1/push` 契约扩展为完整写入流水线（§4.11）。
 > **阶段 7（测试运行器 + 发布链路）修订（2026-10-06）**：新增 `POST /v1/test/run`（§4.13）与 `POST /v1/pack/build`（§4.14）——JSON 路由 **12 → 14 条**；`HubClient` 补 `testRun` / `packBuild`（§6.1）；MCP 工具 10 → 12 个（新增 `tts_test_run` / `tts_pack_build`，§7）。
+> **v0.8.0（桌面 UI 联通）修订（2026-10-07，UI-1b 窗口）**：新增 `POST /v1/files/read`（§4.15）与 `PUT /v1/files/write`（§4.16）——JSON 路由 **14 → 16 条**；`/v1/status` 响应加 `hub.version` / `hub.appMode`（§4.1）；新旗标 `tts hub --app-mode`（app 模式错误体 `details` 含 `userAction` 提示键，§3.2）；loopback CORS Origin 回显（§2）。**红线：`/v1/files/*` 不暴露为 MCP 工具**（防 MCP 越权读宿主机文件，§7）。
 
 ---
 
@@ -37,8 +38,9 @@ hub 控制通道是 `tts hub` 常驻进程暴露的**本机 HTTP+JSON 控制面*
 | 端口 | 缺省 39995；`tts hub --port <n>` 可改；与 39998 / 39997 / 39996 相互独立 | `lifecycle.ts:27-28`、`cli/commands/hub.ts:93-100` |
 | 请求体编码 | UTF-8 JSON 对象（顶层必须是键值对象，数组 / 标量 → 400） | `control.ts:726-737` |
 | 响应编码 | `application/json; charset=utf-8` + `Content-Length` | `control.ts:278-292` |
-| 请求媒体类型 | 读请求体的 POST 路由要求 `Content-Type: application/json`（允许 `; charset=...` 等参数，大小写不敏感）；否则 415。三个 GET 路由与 `/v1/hub/shutdown` **不读请求体**，不校验媒体类型 | `control.ts:213-218`、`:710-717`、`:1049-1057` |
+| 请求媒体类型 | 读请求体的路由（各 POST 路由与 `PUT /v1/files/write`）要求 `Content-Type: application/json`（允许 `; charset=...` 等参数，大小写不敏感）；否则 415。三个 GET 路由与 `/v1/hub/shutdown` **不读请求体**，不校验媒体类型 | `control.ts:213-218`、`:710-717`、`:1049-1057` |
 | 路径匹配 | 精确匹配 pathname；查询串不参与路由（仅 `/v1/packs` 读取 `packsRoot` 参数） | `control.ts:630-665`、`:797-801` |
+| CORS | loopback-only Origin 回显（`null` / `localhost` / `127.0.0.1` / `[::1]`；仅这些回环 Origin 的请求回显 `Access-Control-Allow-Origin`，其余 Origin 不回显） | v0.8.0（UI-1b）新增；桌面 UI（Vite dev server / Tauri webview）跨端口访问 hub 所需，依据 `control.ts`（CORS 处理） |
 | 鉴权 | **无 token / 无鉴权**：唯一访问边界是本机回环。本机任意进程都可调用，切勿把控制通道暴露到局域网 | `control.ts` 全模块无鉴权代码路径；`:225-231` 的地址约束 |
 
 ---
@@ -47,7 +49,7 @@ hub 控制通道是 `tts hub` 常驻进程暴露的**本机 HTTP+JSON 控制面*
 
 ### 3.1 请求体上限与请求侧错误
 
-- 读请求体的 POST 路由：请求体上限 **1MB = 1 048 576 字节**，超限 → **413 `HUB_PAYLOAD_TOO_LARGE`**（超限后不再缓冲，`control.ts:86`、`:239-269`、`:722-725`）。
+- 读请求体的路由（各 POST 路由与 `PUT /v1/files/write`）：请求体上限 **1MB = 1 048 576 字节**，超限 → **413 `HUB_PAYLOAD_TOO_LARGE`**（超限后不再缓冲，`control.ts:86`、`:239-269`、`:722-725`）。
 - 请求体不是合法 JSON、或顶层不是键值对象 → **400 `HUB_BAD_REQUEST`**。
 - 必填字段缺失 / 类型不符 / 全空白字符串 / 非正有限数字 → **400 `HUB_BAD_REQUEST`**，message 形如 `missing or invalid field: root (non-empty string required)`（协议层英文短句）。
 - 请求 URL 本身解析失败（防御路径）→ **400 `HUB_BAD_REQUEST`** `malformed request URL`（`control.ts:630-637`）。
@@ -64,6 +66,8 @@ hub 控制通道是 `tts hub` 常驻进程暴露的**本机 HTTP+JSON 控制面*
 - `message`：协议层英文短句；业务错误（`PackError` / `LuaError`）的 message 由底层模块经 `t()` 生成后**原样透传**（可能是中文）。消费方按 `code` 分支，不解析 message（`control.ts:47-50`）。
 - `details`：可选；无细节时该字段不出现。
 
+**app 模式的错误增强（v0.8.0，UI-1b）**：hub 以 app 模式启动时（`tts hub --app-mode app`，或 `tts-hub` bin 经环境变量 `TTS_HUB_APP_MODE=app`），错误响应的 `details` 可能携带 `userAction` 字段——值是面向用户的**提示键**（i18n 键），桌面 UI 拿到后直接渲染对应的本地化文案，不需要自己按 `code` 硬编码提示语；standalone 模式（缺省）下不注入该字段。`userAction` 只是**附加**提示，`code` / `message` 的语义与取值不变，旧客户端可忽略。
+
 `control.ts` 自身的业务异常映射顺序（`respondError`，`control.ts:681-701`）：
 
 | 抛出类型 | HTTP | code | details |
@@ -79,11 +83,14 @@ hub 控制通道是 `tts hub` 常驻进程暴露的**本机 HTTP+JSON 控制面*
 | code | HTTP | 触发 |
 | --- | --- | --- |
 | `HUB_BAD_REQUEST` | 400 | 请求体非法 JSON / 非对象、必填字段缺失或类型不符、URL 解析失败 |
-| `HUB_NOT_FOUND` | 404 | 路径不在 12 条 JSON 路由中（SSE 路径另计，见 §5） |
-| `HUB_METHOD_NOT_ALLOWED` | 405 | 路径存在但方法不对；响应带 `Allow: GET` / `Allow: POST` |
+| `HUB_NOT_FOUND` | 404 | 路径不在 16 条 JSON 路由中（SSE 路径另计，见 §5） |
+| `HUB_METHOD_NOT_ALLOWED` | 405 | 路径存在但方法不对；响应带 `Allow: GET` / `Allow: POST` / `Allow: PUT`（`/v1/files/write`） |
 | `HUB_PAYLOAD_TOO_LARGE` | 413 | 请求体超过 1MB |
-| `HUB_UNSUPPORTED_MEDIA_TYPE` | 415 | 读体 POST 路由的 `Content-Type` 不是 `application/json` |
+| `HUB_UNSUPPORTED_MEDIA_TYPE` | 415 | 读体路由（POST 与 `PUT /v1/files/write`）的 `Content-Type` 不是 `application/json` |
 | `HUB_CONFIRM_REQUIRED` | 400 | `POST /v1/push` 的 `confirm` 不严格等于 `true` |
+| `HUB_PATH_ESCAPE` | 400 | `/v1/files/read` / `/v1/files/write` 的 `path` 解析后逃逸出请求 `root`（resolve 前缀校验或 symlink 真实路径校验失败，§4.15 / §4.16） |
+| `HUB_CONFLICT` | 409 | `PUT /v1/files/write` 的 `baseSha256` 与目标文件当前内容的实际 sha256 不符（乐观锁冲突，§4.16） |
+| `HUB_FILE_TOO_LARGE` | 413 | `/v1/files/read` 的目标文件超过 20MB 上限（§4.15） |
 | `HUB_PACK_ERROR` | 400 | 底层 `PackError` 透传；`details.packCode` 为业务码（`PACK_*` / `PULL_FAILED` / `SLICE_*` / `PLAN_*` / `IMPORT_*` / `REGISTRY_*` / `PUSH_FAILED` / `PUSH_ASSET_CHANGES_DETECTED` / `BASELINE_CONFLICT` / `PUSH_VERIFY_FAILED` / `BASELINE_*` / `BACKUP_*` 等） |
 | `HUB_LUA_ERROR` | 400 | Lua 运行时错误透传 |
 | `HUB_INTERNAL_ERROR` | 500 | 其余异常（含会话层超时 / 未连接 TTS 的普通 Error、端口占用 `PortInUseError`） |
@@ -108,7 +115,7 @@ hub 控制通道是 `tts hub` 常驻进程暴露的**本机 HTTP+JSON 控制面*
 
 ### 4.0 总览
 
-S2 控制面共 **12 条 JSON 路由**（下表）+ **1 条 SSE 事件流**（`GET /v1/events`，见 §5），共 13 个路径；阶段 7（窗口 G）追加 2 条 JSON 路由（§4.13 / §4.14，下表 13 / 14 行），**JSON 路由合计 14 条**。
+S2 控制面共 **12 条 JSON 路由**（下表 1–12 行）+ **1 条 SSE 事件流**（`GET /v1/events`，见 §5）；阶段 7（窗口 G）追加 2 条 JSON 路由（§4.13 / §4.14，下表 13 / 14 行）；v0.8.0（UI-1b 窗口）追加 2 条 JSON 路由（§4.15 / §4.16，下表 15 / 16 行，桌面 UI 文件读写专用），**JSON 路由合计 16 条**。
 
 | # | 方法 | 路径 | 作用 | 副作用 | 请求体 | 成功响应 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -126,6 +133,8 @@ S2 控制面共 **12 条 JSON 路由**（下表）+ **1 条 SSE 事件流**（`G
 | 12 | POST | `/v1/hub/shutdown` | 优雅关闭 hub | 进程退出 | 不读 | `{ok:true}` |
 | 13 | POST | `/v1/test/run` | 在 TTS 中跑 Lua 测试（阶段 7） | 可能改游戏状态（测试脚本在 TTS 内执行） | `{root, targetGuid?, timeoutMs?, bail?, bundle?, include?}` | `RunReport`（§4.13） |
 | 14 | POST | `/v1/pack/build` | 工作区 → 存档 JSON → BSON 载荷（阶段 7） | 写本地文件（`dryRun` 时无） | `{root, outPath?, dryRun?}` | `BsonBuildResult` + 诊断字段（§4.14） |
+| 15 | POST | `/v1/files/read` | 读取图包工作区内文件（base64，v0.8.0） | 无（只读） | `{root, path}` | `{base64, mime, size}`（§4.15） |
+| 16 | PUT | `/v1/files/write` | 写图包工作区内文本文件（乐观锁，v0.8.0） | 写本地文件 | `{root, path, content, baseSha256?}` | `{sha256, size}`（§4.16） |
 
 所有 POST 路由通用的请求侧错误（400 / 404 / 405 / 413 / 415）见 §3；各小节只列该路由特有的错误。curl 示例假定 hub 在缺省端口 39995。
 
@@ -137,7 +146,7 @@ S2 控制面共 **12 条 JSON 路由**（下表）+ **1 条 SSE 事件流**（`G
 ```json
 {
   "ok": true,
-  "hub": { "editor": true, "tcpClients": 0, "wsClients": 1, "inprocClients": 2, "startedAt": 1759638000000, "uptimeMs": 123456 },
+  "hub": { "editor": true, "tcpClients": 0, "wsClients": 1, "inprocClients": 2, "startedAt": 1759638000000, "uptimeMs": 123456, "version": "0.8.0", "appMode": "standalone" },
   "tts": { "connected": true, "version": "MoonSharp 3.0.0.0", "objects": 42 }
 }
 ```
@@ -148,11 +157,14 @@ S2 控制面共 **12 条 JSON 路由**（下表）+ **1 条 SSE 事件流**（`G
 | `hub.tcpClients` / `hub.wsClients` / `hub.inprocClients` | number | 当前三路扇出下游数 |
 | `hub.startedAt` | number | hub 启动时刻（epoch 毫秒） |
 | `hub.uptimeMs` | number | 已运行毫秒数，**响应时现算**（负值截为 0） |
+| `hub.version` | string | hub 版本号（v0.8.0 起：取自 tts-toolkit `package.json` 的 `version`）；**v0.7.x 旧 hub 无此字段**，消费方以缺失处理 |
+| `hub.appMode` | string | 应用模式：`"standalone"`（独立运行，缺省）或 `"app"`（桌面 UI 作 sidecar 启动；v0.8.0 起，由 `--app-mode` / `TTS_HUB_APP_MODE` 决定） |
 | `tts.connected` | boolean | TTS 是否已连上 39998：经执行 Lua `return _VERSION` 探测（单次 2s 超时）成功即为 true |
 | `tts.version` | string? | 版本探测成功且返回字符串时存在（实测 MoonSharp 版本串） |
 | `tts.objects` | number? | 对象数探测（`return #getObjects()`，2s 超时）成功时存在；失败只影响该可选字段 |
 
 - **TTS 未连接 / 探活失败不是路由错误**：仍 200、`connected:false`（S2 约定）。
+- **版本语义（v0.8.0，UI 兼容策略）**：MINOR bump（0.7.x → 0.8.0）= 新增字段 + 新增路由，**向前兼容**（旧 UI 连新 hub 正常，不读新字段即可）；新 UI 必须按 `hub.version` 判断能力——缺失字段视为旧版（< 0.7.0）；`0.7.0`/`0.7.1` 为降级模式（`/v1/files/*` 不存在，依赖它的功能禁用）；`>= 0.8.0` 全功能。
 - 可能的错误码：404 `HUB_NOT_FOUND`、405 `HUB_METHOD_NOT_ALLOWED`；500 `HUB_INTERNAL_ERROR` 仅为防御路径。
 - curl：
 
@@ -534,6 +546,104 @@ curl -s -X POST http://127.0.0.1:39995/v1/pack/build \
   -d '{"root":"D:/packs/第七大陆","outPath":"D:/packs/第七大陆/dist/pack.bson","dryRun":true}'
 ```
 
+### 4.15 POST /v1/files/read
+
+v0.8.0（UI-1b 窗口）新增：读取图包工作区内的单个文件，返回 base64 内容与 MIME 类型（桌面 UI 的卡面预览 / 素材展示专用；`handleFilesRead`，`src/hub/control.ts`）。**纯本地文件操作，不依赖 `daemon.server`**（不碰 39998 / 39999）。
+
+> **红线 15**：本路由（与 §4.16）**不暴露为 MCP 工具**——MCP 工具层若能经 hub 读宿主机任意文件即构成越权；`HubClient` 提供 `filesRead`（§6.1），桌面 UI 侧用自己的 fetch 客户端直连。若无 hub，独立模式的 CLI / MCP **没有**等价入口（这是有意设计）。
+
+- 请求体：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `root` | string | ✅ | 图包工作区根目录（非空字符串） |
+| `path` | string | ✅ | 目标文件路径（`root` 内的相对路径或绝对路径） |
+
+- 行为（路径防护 + 大小 / 类型闸门，逐道校验）：
+  - **已注册图包限定**：`root` 须为已注册图包的工作区根（注册表之外的目录一律拒绝，防把 hub 当通用文件读口）；
+  - **resolve 前缀校验**：`path` 经 `path.resolve` 归一后必须仍位于 `root` 之内（`../` 穿越逃逸 → 400 `HUB_PATH_ESCAPE`）；
+  - **symlink 真实路径校验**：目标文件的真实路径（realpath，含符号链接展开）必须仍在 `root` 之内（软链逃逸 → 400 `HUB_PATH_ESCAPE`）；
+  - **MIME 白名单**（按扩展名）：`png` / `jpg` / `jpeg` / `webp` / `gif` / `pdf` / `txt` / `lua` / `xml` / `json` / `csv` / `md`；白名单之外的扩展名 → 400 `HUB_BAD_REQUEST`；
+  - **大小上限 20MB**：目标文件超过 20 MB → 413 `HUB_FILE_TOO_LARGE`（先 stat 后读，不做无谓整读）。
+- 响应 200：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `base64` | string | 文件内容的 base64 编码 |
+| `mime` | string | 按扩展名映射的 MIME 类型（白名单内） |
+| `size` | number | 文件原始字节数（非 base64 编码后长度） |
+
+- 可能的错误码：
+
+| HTTP | code | 触发 |
+| --- | --- | --- |
+| 400 | `HUB_BAD_REQUEST` | `root` / `path` 缺失或非非空字符串；扩展名不在 MIME 白名单 |
+| 400 | `HUB_PATH_ESCAPE` | resolve 前缀校验或 symlink 真实路径校验失败（逃逸出 `root`） |
+| 413 | `HUB_FILE_TOO_LARGE` | 目标文件超过 20MB |
+| 405 | `HUB_METHOD_NOT_ALLOWED` | GET 本路由（响应带 `Allow: POST`） |
+| 500 | `HUB_INTERNAL_ERROR` | 文件读取 IO 失败等普通 Error |
+
+- curl（读一张卡面图，响应为 base64）：
+
+```bash
+curl -s -X POST http://127.0.0.1:39995/v1/files/read \
+  -H "Content-Type: application/json" \
+  -d '{"root":"D:/packs/第七大陆","path":"decks/冒险/atlas.png"}'
+```
+
+### 4.16 PUT /v1/files/write
+
+v0.8.0（UI-1b 窗口）新增：向图包工作区内写入**文本**文件（桌面 UI 工作台保存脚本 / 笔记等；`handleFilesWrite`，`src/hub/control.ts`）。**方法为 PUT 而非 POST**（v0.8.0 已确认决策：写语义 + 幂等表达，dispatch 相应扩为 GET / POST / PUT 三路）。**纯本地文件操作，不依赖 `daemon.server`**。
+
+> **红线 15**：同 §4.15——本路由不暴露为 MCP 工具；`HubClient` 提供 `filesWrite`（§6.1）。
+
+- 请求体：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `root` | string | ✅ | 图包工作区根目录（非空字符串） |
+| `path` | string | ✅ | 目标文件路径（`root` 内的相对路径或绝对路径） |
+| `content` | string | ✅ | 写入的文本内容（UTF-8；**仅文本**，不收二进制） |
+| `baseSha256` | string | 可省略 | **乐观锁基线**：调用方最后一次读到的文件 sha256（与 §4.15 响应配套，hex 形式） |
+
+- 路径防护与 §4.15 相同：已注册图包限定 + resolve 前缀校验 + symlink 真实路径校验（失败 → 400 `HUB_PATH_ESCAPE`）；写入大小上限 **1MB**（`content` 是 JSON 请求体的一部分，由 §3.1 的请求体上限兜底：body 超 1MB → 413 `HUB_PAYLOAD_TOO_LARGE`）。
+- **baseSha256 乐观锁语义**（并发保护，UI 多窗口 / 用户手动改文件的冲突防线）：
+  - 未提供 `baseSha256`：直接覆盖写入（last-write-wins）；
+  - 提供 `baseSha256`：写入前先计算目标文件**当前内容**的 sha256，与 `baseSha256` **不一致 → 409 `HUB_CONFLICT`，不写入**——调用方应重新读取文件（拿新 baseSha256）、合并改动后重试，而不是盲目覆盖。
+- 响应 200：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `sha256` | string | 写入内容（`content` 的 UTF-8 字节）的 sha256，小写十六进制（与 `baseSha256` 同格式，可作下一次写入的乐观锁基线） |
+| `size` | number | 写入的字节数（UTF-8 编码后） |
+
+- 可能的错误码：
+
+| HTTP | code | 触发 |
+| --- | --- | --- |
+| 400 | `HUB_BAD_REQUEST` | `root` / `path` / `content` 缺失或类型不符；`baseSha256` 非非空字符串 |
+| 400 | `HUB_PATH_ESCAPE` | resolve 前缀校验或 symlink 真实路径校验失败（逃逸出 `root`） |
+| 409 | `HUB_CONFLICT` | `baseSha256` 与目标文件当前内容的实际 sha256 不符（乐观锁冲突） |
+| 413 | `HUB_PAYLOAD_TOO_LARGE` | 请求体（含 `content`）超过 1MB |
+| 405 | `HUB_METHOD_NOT_ALLOWED` | GET / POST 本路由（响应带 `Allow: PUT`） |
+| 500 | `HUB_INTERNAL_ERROR` | 文件写入 IO 失败等普通 Error |
+
+- curl（带乐观锁保存文本文件）：
+
+```bash
+curl -s -X PUT http://127.0.0.1:39995/v1/files/write \
+  -H "Content-Type: application/json" \
+  -d '{"root":"D:/packs/第七大陆","path":"decks/冒险/notes.md","content":"# 笔记\n","baseSha256":"<当前文件的 sha256>"}'
+```
+
+- curl（新建 / 无条件覆盖：不带 baseSha256，last-write-wins）：
+
+```bash
+curl -s -X PUT http://127.0.0.1:39995/v1/files/write \
+  -H "Content-Type: application/json" \
+  -d '{"root":"D:/packs/第七大陆","path":"decks/冒险/notes.md","content":"# 新建\n"}'
+```
+
 ---
 
 ## 5. SSE 事件流
@@ -594,6 +704,8 @@ curl -N http://127.0.0.1:39995/v1/events
 | `shutdown()` | POST `/v1/hub/shutdown` | `HubOkResult` `{ok:true}` |
 | `testRun({root, targetGuid?, timeoutMs?, bail?, bundle?})` | POST `/v1/test/run` | `unknown`（`RunReport`，§4.13） |
 | `packBuild({root, outPath?, dryRun?})` | POST `/v1/pack/build` | `unknown`（`BsonBuildResult` + 诊断字段，§4.14） |
+| `filesRead(root, path)` | POST `/v1/files/read` | `unknown`（`{base64, mime, size}`，§4.15；v0.8.0） |
+| `filesWrite(root, path, content, baseSha256?)` | PUT `/v1/files/write` | `unknown`（`{sha256, size}`，§4.16；v0.8.0；409 `HUB_CONFLICT` 走 `HubError` 透传） |
 
 - 缺省选项（`HubClientOptions`，`client.ts:49-76`）：`host=127.0.0.1`、`port=39995`、单请求 `timeoutMs=30000`（覆盖"发起请求 + 读取响应体"全程）；host 为 IPv6 字面量时自动加 `[]`。
 - 请求体由 `JSON.stringify` 序列化，仅在有 body 时带 `Content-Type: application/json`；`push` 的 `confirm` 参数类型是字面量 `true`——调用方传 `false` / 漏传**编译期**即报错，与服务端 `HUB_CONFIRM_REQUIRED` 门双保险（`client.ts:566`）。`push` 第 3 参 `PushOptions`（`dryRun` / `forceScriptsOnly` / `skipBackup` / `skipBaselineCheck` / `backupRetention`，全部可选）逐字段透传，未给的字段**不出现在请求体**里、由 hub 侧套用缺省值（§4.11）。
@@ -630,7 +742,9 @@ S2 明确控制通道**不暴露**以下能力（`control.ts:5-6`、`施工流�
 | `sync-upstream` | 上游仓库同步，不触碰游戏 | 对应本地命令 |
 | `review` | 评审流程（本地 diff / 门禁） | `tts review`（本地直接执行） |
 
-推论：MCP 的 12 个工具也不包含这些能力（工具清单见 `src/mcp/server.ts:29-40`）；控制通道内也**没有**通用文件读写 / 任意命令执行入口（`/v1/exec` 的 Lua 在 TTS 进程内执行，不是宿主机 shell）。阶段 7 新增的 `/v1/pack/build`（§4.14）虽然"纯本地"，但它是**离线回路的构建步骤**（工作区 → 可加载存档 → 上传载荷），不是通用文件写入入口：路径由 `root` 推导、内容由 pack 布局决定，且不提供覆盖任意文件的能力。
+推论：MCP 的 12 个工具也不包含这些能力（工具清单见 `src/mcp/server.ts:29-40`）；控制通道内也**没有**任意命令执行入口（`/v1/exec` 的 Lua 在 TTS 进程内执行，不是宿主机 shell）。
+
+**通用文件读写的边界（v0.8.0 修订）**：v0.8.0 之前控制通道内"没有通用文件读写"；v0.8.0 起新增的 `/v1/files/read` / `/v1/files/write`（§4.15 / §4.16）是**有边界的例外**——仅服务已注册图包工作区（resolve 前缀校验 + symlink 真实路径校验 + 大小上限 + MIME 白名单），**桌面 UI 经 `/v1/files/*` 直连 hub，MCP 不暴露这两个能力（红线 15：防止 MCP 越权读 / 写宿主机文件）**，MCP 工具清单不变（仍 12 个）。阶段 7 新增的 `/v1/pack/build`（§4.14）虽然"纯本地"，但它是**离线回路的构建步骤**（工作区 → 可加载存档 → 上传载荷），不是通用文件写入入口：路径由 `root` 推导、内容由 pack 布局决定，且不提供覆盖任意文件的能力。
 
 ---
 
@@ -657,3 +771,4 @@ S2 明确控制通道**不暴露**以下能力（`control.ts:5-6`、`施工流�
 | 2026-10-05 | 初版（窗口 D / 阶段 4）。契约依据 `src/hub/control.ts`（12 条 JSON 路由 + `GET /v1/events` SSE）、`src/hub/lifecycle.ts`、`src/mcp/client.ts`、`src/cli/_shared.ts`；路由表与 `方案设计.md` §14.5.1 S2 / `施工流程.md` 阶段 4 一致。**已知问题 #1**：`/v1/scripts/pull` 与 `/v1/diff` 在 hub 运行期因 39998 端口冲突返回 500（待修，详见 §4.2 / §4.10）。**（阶段 5 已修复，见下行）** |
 | 2026-10-05 | 阶段 5（写入路径）Run 2 修订。① **已知问题 #1 修复落档**：`PullOptions.server` / `DiffOptions.server` 注入（`src/pack/pull.ts:93-99` / `src/pack/diff.ts:161-167`），hub 路由传 `daemon.server`（`control.ts:887` / `:1036`）——§4.2 / §4.10 的"待修"块改为"已修复"并补测试现状。② **§4.11 `/v1/push` 契约扩展**：请求体加 `dryRun` / `forceScriptsOnly` / `skipBackup` / `skipBaselineCheck` / `backupRetention` 五个可选字段，响应体改为 `{ok:true, dryRun, pushed, skipped, items(=pushed+skipped 兼容别名), backupDir?, baselineConflicts?, assetChanges?}`，错误码补 `PUSH_ASSET_CHANGES_DETECTED` / `BASELINE_CONFLICT` 等（经 `HUB_PACK_ERROR` + `details.packCode` 透传）。③ 依据行补 `src/pack/push.ts` / `src/safety/baseline.ts`；§3.3 / §3.4 / §6.1 / §6.2 同步 push 的新形状与注入语义；新增契约文档 `docs/schemas/baseline.json.md` 交叉引用。 |
 | 2026-10-06 | 阶段 7（窗口 G：测试运行器 + 发布链路）修订（子代理 C2）。① **新增 §4.13 `POST /v1/test/run`**：`discoverTests` + `TestRunner`（`server: daemon.server` 注入，坑 17），请求体 `{root, targetGuid?, timeoutMs?, bail?, bundle?, include?}`（`include` 为附加可选字段），响应 = `RunReport`；`details.packCode` 补 `TEST_RUN_*`。② **新增 §4.14 `POST /v1/pack/build`**：`buildSave` + `buildBson`（纯本地、不依赖 daemon.server），请求体 `{root, outPath?, dryRun?}`，响应 = `BsonBuildResult`（`{outPath, byteLength, headerLength}`）+ 诊断字段（`dryRun` / `jsonPath` / `warnings` / 四个替换计数），`dryRun` 下字节数恒 0。③ §4.0 总览表补 13 / 14 行、计数 12 → 14；§6.1 补 `testRun` / `packBuild`；§1 与 §7 的"MCP 10 个工具" → 12 个（新增 `tts_test_run` / `tts_pack_build`）。实现依据：`src/hub/control.ts:1193-1290`（两个 handler）、`src/mcp/client.ts`（`testRun` / `packBuild`）、`src/mcp/tools/test-run.ts` / `pack-build.ts`、`src/test/index.ts`（Stage A 桶文件）、`src/pack/build.ts`、`src/publish/bson.ts`。单测：`tests/unit/mcp-test-run.test.ts` / `tests/unit/mcp-pack-build.test.ts`。 |
+| 2026-10-07 | v0.8.0（桌面 UI 联通）修订（UI-1b 窗口）。① **新增 2 条文件路由**：§4.15 `POST /v1/files/read`（base64 + MIME 白名单 + 20MB 上限）与 §4.16 `PUT /v1/files/write`（仅文本、1MB 上限、`baseSha256` 乐观锁，不符 → 409；PUT 而非 POST 为已确认决策，dispatch 扩为 GET/POST/PUT 三路）——路径防护均为已注册图包限定 + resolve 前缀校验 + symlink 真实路径校验；新错误码 `HUB_PATH_ESCAPE`（400）/ `HUB_CONFLICT`（409）/ `HUB_FILE_TOO_LARGE`（413）（§3.3）；§4.0 总览补 15 / 16 行、计数 **14 → 16**；§6.1 补 `filesRead` / `filesWrite`。**红线 15：`/v1/files/*` 不暴露为 MCP 工具**（§7 同步修订）。② **§4.1 `/v1/status` 增强**：响应体加 `hub.version`（取自 tts-toolkit `package.json`）与 `hub.appMode`，补版本兼容语义（旧 hub 缺字段视为旧版）。③ **app 模式**：新 CLI 旗标 `tts hub --app-mode <standalone\|app>`（白名单校验）与环境变量 `TTS_HUB_APP_MODE`（`tts-hub` bin 保持零旗标，经 `lifecycle.ts` 的 `runHubProcess` 解析链透传）；app 模式下错误体 `details` 可能含 `userAction` 提示键（§3.2），standalone 不注入。④ **§2 CORS**：loopback-only Origin 回显（`null` / `localhost` / `127.0.0.1` / `[::1]`）。⑤ 读写体的 1MB 上限与 `Content-Type` 校验口径从"POST 路由"扩为"POST 路由 + `PUT /v1/files/write`"（§2 / §3.1 / §3.3）。实现依据：`src/hub/control.ts`（files 路由 + CORS + appMode + `hub.version`）、`src/mcp/client.ts`（`filesRead` / `filesWrite`）、`src/hub/lifecycle.ts` + `src/cli/commands/hub.ts`（app-mode）、`locales/*.json`（`cli.hub.option.appMode`）。单测：`tests/unit/hub-control-files.test.ts`（agentD）。 |

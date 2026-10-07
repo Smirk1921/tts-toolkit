@@ -9,7 +9,10 @@
  * - PackError 透传：/v1/diff 对无 pack.yaml 的目录 → 400 HUB_PACK_ERROR +
  *   details.packCode === "PACK_NOT_FOUND"（/v1/deck/plan 非法规则 → PLAN_RULE_INVALID）；
  * - GET /v1/events SSE：建立连接 → daemon.fanout 扇出 → 收到 data: 行；
- *   不在 SSE 转发集合的消息（ReturnValue）不产生 data: 行。
+ *   不在 SSE 转发集合的消息（ReturnValue）不产生 data: 行；
+ * - UI-1b：GET /v1/status 的 hub 字段携带 version（= package.json 版本）与
+ *   appMode（缺省 "standalone"），旧版 hub 无这两个字段、UI 侧按缺失降级；
+ *   /v1/files/* 两条文件路由与 CORS 的深挖在 hub-control-files.test.ts。
  *
  * 端口约束：daemon 三端口用 listen(0) 抢占的临时端口（daemon 不暴露实绑端口，
  * 见 hub-daemon.test.ts 头注释）；控制通道用 port=0 由操作系统分配并经
@@ -134,7 +137,7 @@ function expectErrorBody(status: number, body: unknown, code: string): {
 }
 
 describe('GET /v1/status 与 /v1/packs（200 路由）', () => {
-  it('GET /v1/status：200，hub.editor 为 true，tts.connected 为布尔值', async () => {
+  it('GET /v1/status：200，hub.editor 为 true，hub.version/appMode（UI-1b），tts.connected 为布尔值', async () => {
     const { base } = await startStack();
     const res = await get(base, '/status');
     expect(res.status).toBe(200);
@@ -142,12 +145,17 @@ describe('GET /v1/status 与 /v1/packs（200 路由）', () => {
     const body: unknown = await res.json();
     const status = body as {
       ok?: boolean;
-      hub?: { editor?: boolean; startedAt?: number };
+      hub?: { editor?: boolean; startedAt?: number; version?: string; appMode?: string };
       tts?: { connected?: boolean };
     };
     expect(status.ok).toBe(true);
     expect(status.hub?.editor).toBe(true);
     expect(typeof status.hub?.startedAt).toBe('number');
+    // UI-1b：hub.version 非空字符串（本进程 package.json 版本）、hub.appMode 为
+    // 本测试栈的缺省值 "standalone"（未传 ControlServerOptions.appMode）
+    expect(typeof status.hub?.version).toBe('string');
+    expect((status.hub?.version ?? '').length).toBeGreaterThan(0);
+    expect(status.hub?.appMode).toBe('standalone');
     expect(typeof status.tts?.connected).toBe('boolean'); // 探测失败不是路由错误，仍 200
   });
 

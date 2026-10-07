@@ -757,7 +757,8 @@
         "needB": "Pass --b to specify the source B (new render) directory: that semantic choice belongs to the caller, this tool does not guess",
         "noDeck": "No deck directory found under {root}; create one first with tts import / tts deck",
         "multipleDecks": "Multiple decks under decks/ ({names}); pass --deck to choose the one to review",
-        "invalidPort": "Invalid port: {value} (must be an integer in 1..65535)"
+        "invalidPort": "Invalid port: {value} (must be an integer in 1..65535)",
+        "invalidOption": "Invalid option value: {value} (allowed: {allowed})"
       },
       "status": {
         "needApprovalRoot": "Pass --approval-root pointing at the approval tool repository (contains agent.py), or use --server for HTTP"
@@ -785,7 +786,8 @@
         "editorPort": "TTS editor port (default 39998; TTS connects inbound)",
         "tcpPort": "TCP fanout port (default 39997)",
         "wsPort": "WebSocket fanout port (default 39996)",
-        "logFile": "Log file path (appended; by default logs go to stdout only)"
+        "logFile": "Log file path (appended; by default logs go to stdout only)",
+        "appMode": "App mode (standalone=standalone; app=launched as sidecar by desktop UI, errors carry userAction key)"
       },
       "started": "Hub started: control channel http://127.0.0.1:{controlPort}/v1; editor port {editorPort}; TCP fanout {tcpPort}; WS fanout {wsPort} (Ctrl+C to stop)",
       "stopped": "Hub stopped"

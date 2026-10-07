@@ -2,7 +2,8 @@
 /**
  * hub 控制通道 HTTP 客户端（{@link HubClient} / {@link probeHub}）：CLI 与 MCP 工具层
  * 共用的唯一 hub 访问入口，与 src/hub/control.ts 的 12 条 S2 路由 + 2 条阶段 7
- * 路由（/v1/test/run、/v1/pack/build）一一对应（本模块
+ * 路由（/v1/test/run、/v1/pack/build）+ 2 条 UI-1b 文件路由（/v1/files/read、
+ * /v1/files/write）一一对应（本模块
  * 不覆盖 GET /v1/events SSE——事件订阅由扇出层 TCP / WS 客户端承担，见
  * src/hub/fanout.ts）。
  *
@@ -12,6 +13,10 @@
  *   丢弃——HTTP 场景无交互）、/v1/deck/plan 的 body 就是 {@link PlanOptions} 本身、
  *   /v1/push 必须 confirm:true（push 的 confirm 参数类型是字面量 `true`，调用方传
  *   false 编译期即报错，与服务端 HUB_CONFIRM_REQUIRED 门对齐）；
+ * - {@link HubClient.filesRead} / {@link HubClient.filesWrite}（UI-1b）对应 hub 的
+ *   /v1/files/* 路由：仅供 UI / CLI 内部消费，**不注册为 MCP 工具**（红线 15，
+ *   防 MCP 越权读写宿主机文件）；files/write 走 PUT，baseSha256 可选乐观锁
+ *   （不符时 hub 返回 409 HUB_CONFLICT，经 {@link HubError} 透传）；
  * - 除 status / saveAndPlay / push / shutdown 按定型返回外，其余方法原样返回控制
  *   通道的 JSON 响应体（unknown）：/v1/exec 的响应体是 `{result:...}` 包装（见
  *   src/hub/control.ts 的 handleExec）、/v1/packs 是注册表 JSON、/v1/assets/check
@@ -94,12 +99,38 @@ export interface HubTtsStatus {
   objects?: number;
 }
 
+/**
+ * {@link HubClient.status} 返回中 hub 自身状态部分（GET /v1/status 的 hub 字段
+ * 定型形状，UI-1b 收窄：新增 version / appMode 两个字段）。
+ */
+export interface HubInfoStatus {
+  /** 编辑器入站端口（39998）当前绑定状态描述（hub 侧 daemon.stats 原样透传）。 */
+  editor: number;
+  /** TCP 扇出端口（39997）当前连接的客户端数。 */
+  tcpClients: number;
+  /** WS 扇出端口（39996）当前连接的客户端数。 */
+  wsClients: number;
+  /** 进程内直连的客户端数。 */
+  inprocClients: number;
+  /** hub 进程启动时刻（epoch 毫秒）。 */
+  startedAt: number;
+  /** hub 进程已运行毫秒数（hub 侧现算，负值截为 0）。 */
+  uptimeMs: number;
+  /** hub 版本号（hub 进程 package.json 的 version；UI 据此做能力降级判断）。 */
+  version: string;
+  /** 应用模式："standalone"（独立运行）或 "app"（桌面 UI sidecar）。 */
+  appMode: string;
+}
+
 /** {@link HubClient.status} 的返回类型（GET /v1/status 的定型形状）。 */
 export interface HubStatusResult {
   /** 固定 true（hub 侧 200 约定）。 */
   ok: true;
-  /** hub 自身状态（editor/tcpClients/wsClients/inprocClients/startedAt/uptimeMs）。 */
-  hub: unknown;
+  /**
+   * hub 自身状态（定型 {@link HubInfoStatus}）。运行时为 hub 响应原样透传
+   * （不逐字段校验——与旧版本 hub 互通时字段可能缺失，UI / 调用方按需判空）。
+   */
+  hub: HubInfoStatus;
   /** TTS 连接状态。 */
   tts: HubTtsStatus;
 }
@@ -307,7 +338,8 @@ function buildBaseUrl(host: string, port: number): string {
 
 /**
  * hub 控制通道 HTTP 客户端：方法与 src/hub/control.ts 的 12 条 S2 路由 + 2 条
- * 阶段 7 路由（/v1/test/run、/v1/pack/build）一一对应，
+ * 阶段 7 路由（/v1/test/run、/v1/pack/build）+ 2 条 UI-1b 文件路由
+ * （/v1/files/read、/v1/files/write）一一对应，
  * CLI 与 MCP 工具层共用。实例无状态（可长期持有），失败按模块头注释的三类语义
  * 抛 {@link HubNotRunningError} / {@link HubError}，绝不返回半截结果。
  */
@@ -334,14 +366,14 @@ export class HubClient {
    * 超时覆盖"发起请求 + 读取响应体"全程（finally 中 clearTimeout）；网络层失败
    * （fetch reject / 中止 / 响应体读取中断）→ HubNotRunningError；4xx/5xx 按响应
    * 体标准形分类为 HubError；2xx 但 body 非法 JSON → HubError(HUB_UNKNOWN)。
-   * @param method HTTP 方法（控制通道只用 GET / POST）
+   * @param method HTTP 方法（控制通道用 GET / POST / PUT）
    * @param path 路由路径（相对 /v1，如 "/exec"）
    * @param body 请求体（undefined 表示 GET / 不带体；否则 JSON 序列化）
    * @returns 已解析的 JSON 响应体
    * @throws HubNotRunningError 网络层失败时
    * @throws HubError HTTP 4xx/5xx 或响应体不是合法 JSON 时
    */
-  private async request(method: "GET" | "POST", path: string, body?: unknown): Promise<unknown> {
+  private async request(method: "GET" | "POST" | "PUT", path: string, body?: unknown): Promise<unknown> {
     const url = `${this.baseUrl}${path}`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -409,7 +441,7 @@ export class HubClient {
     if (typeof ttsRaw.objects === "number") {
       tts.objects = ttsRaw.objects;
     }
-    return { ok: true, hub: body.hub, tts };
+    return { ok: true, hub: body.hub as HubInfoStatus, tts };
   }
 
   /**
@@ -676,6 +708,51 @@ export class HubClient {
    */
   async packBuild(opts: { root: string; outPath?: string; dryRun?: boolean }): Promise<unknown> {
     return this.request("POST", "/pack/build", opts);
+  }
+
+  /**
+   * POST /v1/files/read：读图包工作区 root 内的一个文件（UI-1b）。
+   *
+   * hub 侧约束：root 必须是已注册图包根；path 相对 root 且过四层路径防护
+   * （绝对路径 / ".." / 盘符 / null 字节 / symlink 逃逸 → 400 HUB_PATH_ESCAPE）；
+   * 扩展名白名单 png/jpg/jpeg/webp/gif/pdf/txt/lua/xml/json/csv/md（其余 400）；
+   * 文件上限 20MB（413 HUB_FILE_TOO_LARGE）。**不注册为 MCP 工具**（红线 15），
+   * 本方法仅供 UI / CLI 内部消费。
+   * @param root 图包工作区根目录（绝对路径）
+   * @param path 相对 root 的文件路径
+   * @returns 控制通道 JSON 响应体（`{base64, mime, size}`）
+   * @throws HubNotRunningError hub 不可达时
+   * @throws HubError hub 返回协议错误（HUB_BAD_REQUEST / HUB_PATH_ESCAPE /
+   *   HUB_FILE_TOO_LARGE / HUB_PACK_ERROR——root 未注册时）时
+   */
+  async filesRead(root: string, path: string): Promise<unknown> {
+    return this.request("POST", "/files/read", { root, path });
+  }
+
+  /**
+   * PUT /v1/files/write：把一个文本文件写进图包工作区 root（UI-1b，工作台保存
+   * 脚本用）。**不注册为 MCP 工具**（红线 15）。
+   *
+   * hub 侧约束：同套路径防护（root 不要求已注册）；仅文本（content 为字符串，
+   * 允许空串）；content 上限 1MB（413 HUB_FILE_TOO_LARGE）；父目录必须已存在；
+   * baseSha256 提供时做乐观锁比对（与当前文件 sha256 不符或目标不存在 →
+   * 409 HUB_CONFLICT）。
+   * @param root 图包工作区根目录（绝对路径）
+   * @param path 相对 root 的目标文件路径
+   * @param content 待写入的文本（UTF-8；允许空串）
+   * @param baseSha256 可选乐观锁基准：当前文件内容的 sha256（64 位 hex）；
+   *   不带则跳过比对直接覆写
+   * @returns 控制通道 JSON 响应体（`{sha256, size}`——对写入字节计算）
+   * @throws HubNotRunningError hub 不可达时
+   * @throws HubError hub 返回协议错误（HUB_BAD_REQUEST / HUB_PATH_ESCAPE /
+   *   HUB_FILE_TOO_LARGE / HUB_CONFLICT）时
+   */
+  async filesWrite(root: string, path: string, content: string, baseSha256?: string): Promise<unknown> {
+    const body: Record<string, unknown> = { root, path, content };
+    if (baseSha256 !== undefined) {
+      body.baseSha256 = baseSha256;
+    }
+    return this.request("PUT", "/files/write", body);
   }
 }
 

@@ -2,7 +2,8 @@
 /**
  * hub 控制通道（S2）：HTTP+JSON 服务，监听 http://127.0.0.1:39995/v1，零框架（node:http）。
  *
- * 路由表（与方案设计 §14.5.1 S2 一致；不暴露 pack export / pack import .ttsmod /
+ * 路由表（S2 12 条 + 阶段 7 的 /v1/test/run、/v1/pack/build + UI-1b 的
+ * /v1/files/read、/v1/files/write；不暴露 pack export / pack import .ttsmod /
  * sync-upstream / review）：
  *
  * | 方法 | 路由                      | 作用                                |
@@ -22,12 +23,22 @@
  * | GET  | /v1/events                | SSE 事件流                          |
  * | POST | /v1/test/run              | 跑 Lua 测试返回 RunReport（阶段 7） |
  * | POST | /v1/pack/build            | 工作区 → 存档 JSON → BSON（阶段 7） |
+ * | POST | /v1/files/read            | 读 root 内文件 → base64（UI-1b）    |
+ * | PUT  | /v1/files/write           | 写文本文件进 root（UI-1b，乐观锁）  |
  *
  * 统一约定：
  * - 只监听回环地址（opts.host 缺省 "127.0.0.1"；通配地址 "0.0.0.0" / "::" /
  *   空串在 {@link createControlServer} 构造时直接抛错，绝不监听所有接口）；
- * - POST 请求体上限 1MB（超限 413），Content-Type 必须是 application/json
- *   （否则 415）；三条 GET 路由不读请求体；
+ * - 读体路由（POST / PUT）请求体上限 1MB（超限 413 HUB_PAYLOAD_TOO_LARGE；
+ *   /v1/files/write 单独放宽到 8MB——其 content 业务上限仍是 1MB，放宽只为
+ *   容纳 JSON 字符串转义的最坏膨胀，超限映射见 {@link handleFilesWrite}），
+ *   Content-Type 必须是 application/json（否则 415）；三条 GET 路由不读请求体；
+ * - loopback CORS（UI-1b，桌面 UI / Vite dev server 跨源访问）：Origin 缺省
+ *   （同源请求）或非白名单来源时不发任何 CORS 头；Origin 为字面 "null" 或
+ *   http(s)://localhost / 127.0.0.1 / [::1]（任意端口）时回显
+ *   Access-Control-Allow-Origin；OPTIONS（预检）统一 204 +
+ *   Access-Control-Allow-Methods: GET,POST,PUT,OPTIONS +
+ *   Access-Control-Allow-Headers: Content-Type，不进路由表；
  * - 响应统一 JSON；错误统一 `{error:{code,message,details?}}` + 4xx/5xx：
  *   - 请求侧：HUB_BAD_REQUEST / HUB_NOT_FOUND / HUB_METHOD_NOT_ALLOWED /
  *     HUB_PAYLOAD_TOO_LARGE / HUB_UNSUPPORTED_MEDIA_TYPE / HUB_CONFIRM_REQUIRED；
@@ -64,17 +75,40 @@
  *     时不写任何文件，byteLength / headerLength 恒为 0）；
  *   两条路由的业务失败都经 respondError 映射为 400 HUB_PACK_ERROR +
  *   details.packCode（TEST_RUN_* / SKELETON_* / PUBLISH_* 等）。
+ * - /v1/files/read 与 /v1/files/write（UI-1b，桌面 UI 专用，**不注册为 MCP 工具**
+ *   ——红线 15，防 MCP 越权读写宿主机文件）：
+ *   - /v1/files/read：body `{root, path}`；root 必须是已注册图包根（在
+ *     `<packsRoot>/.registry.yaml` 里有对应条目，否则 400 HUB_BAD_REQUEST），
+ *     path 必须相对 root 且通过 {@link resolveWithinRoot} 的四层路径防护
+ *     （HUB_PATH_ESCAPE → 400）；扩展名白名单
+ *     png/jpg/jpeg/webp/gif/pdf/txt/lua/xml/json/csv/md 之外 400；文件上限
+ *     20MB（413 HUB_FILE_TOO_LARGE）；响应 `{base64, mime, size}`；
+ *   - /v1/files/write：body `{root, path, content, baseSha256?}`；同套路径防护
+ *     （root 不要求已注册——按方案 §8.4，仅 read 校验注册表）；仅文本
+ *     （content 含 null 字节 400）、content 上限 1MB（413 HUB_FILE_TOO_LARGE）、
+ *     父目录必须已存在（不隐式建目录）；baseSha256（64 位 hex）提供时与当前
+ *     文件 sha256 乐观锁比对（文件不存在也视为冲突），不符 409 HUB_CONFLICT；
+ *     响应 `{sha256, size}`；
+ *   - appMode：opts.appMode（"standalone" | "app"，缺省 "standalone"，由
+ *     lifecycle 层按启动旗标 / TTS_HUB_APP_MODE 环境变量决定）；appMode ===
+ *     "app" 时（桌面 sidecar 形态）所有错误响应的 details 附带 userAction
+ *     字段（i18n 风格提示键，UI 直接渲染；standalone 形态不带）。
  *
  * 本模块不产出面向用户的文案：错误 message 是协议层英文短句（消费方是 MCP 工具
  * 层与运维日志，双语呈现由 MCP 层负责），与 src/hub/lifecycle.ts 的日志同一口径
  * 不引入 i18n；业务错误（PackError / LuaError）的 message 由底层模块经 t() 生成
- * 后原样透传。
+ * 后原样透传。唯一的例外是 details.userAction——它是给桌面 UI 渲染用的 i18n
+ * 提示键（键名即契约，译文由 UI 侧维护），standalone 形态不出现。
  */
 
+import { createHash } from "node:crypto";
+import type { Stats } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import type { Socket } from "node:net";
 import path from "node:path";
 
+import pkg from "../../package.json" with { type: "json" };
 import { checkUrls } from "../assets/check.js";
 import { planReplace, type PlanOptions } from "../deck/plan.js";
 import { sliceAtlas, type SliceOptions } from "../deck/slice.js";
@@ -84,7 +118,7 @@ import { importAssets } from "../pack/import.js";
 import { PackError } from "../pack/packyaml.js";
 import { pullFromGame } from "../pack/pull.js";
 import { pushSaveAndPlay } from "../pack/push.js";
-import { readRegistry } from "../pack/registry.js";
+import { findPack, readRegistry, registryPath } from "../pack/registry.js";
 import { InboundId } from "../protocol/messages.js";
 import { buildBson } from "../publish/bson.js";
 import { luaGetObjectCount, luaGetVersion } from "../session/lua.js";
@@ -92,6 +126,7 @@ import { LuaError } from "../session/exec.js";
 import type { ScriptState } from "../session/scripts.js";
 import { discoverTests, TestRunner } from "../test/index.js";
 import type { HubDaemon } from "./daemon.js";
+import { PathEscapeError, resolveWithinRoot } from "./paths.js";
 
 // ---------------------------------------------------------------------------
 // 常量
@@ -114,6 +149,59 @@ const DEFAULT_BACKUP_RETENTION = 20;
 
 /** /v1/status 探测 TTS 时单次 exec 的超时毫秒数。 */
 const TTS_PROBE_TIMEOUT_MS = 2_000;
+
+/** /v1/files/read 的文件大小上限：20MB。 */
+const MAX_READ_FILE_BYTES = 20 * 1_048_576;
+
+/** /v1/files/write 的 content 大小上限：1MB（UTF-8 字节数）。 */
+const MAX_WRITE_CONTENT_BYTES = 1_048_576;
+
+/**
+ * /v1/files/write 的请求体上限：8MB。content 业务上限是 1MB，但 JSON 字符串
+ * 转义最坏逐字符膨胀 6 倍（控制字符 → \uXXXX），放宽请求体上限是为了让
+ * "content 超限"落在 413 HUB_FILE_TOO_LARGE 的专用错误码上，而不是先被通用
+ * 的 413 HUB_PAYLOAD_TOO_LARGE 截胡（两码都是 413，但语义不同）。
+ */
+const MAX_WRITE_BODY_BYTES = 8 * 1_048_576;
+
+/**
+ * /v1/files/read 的扩展名 → MIME 白名单（大小写不敏感；白名单之外的扩展名
+ * 400 HUB_BAD_REQUEST 拒绝）。lua 无注册 MIME，按纯文本给出。
+ */
+const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+  pdf: "application/pdf",
+  txt: "text/plain",
+  lua: "text/plain",
+  xml: "application/xml",
+  json: "application/json",
+  csv: "text/csv",
+  md: "text/markdown",
+};
+
+/**
+ * CORS 白名单来源：字面 "null"（file:// / 沙箱 iframe 场景）或 http(s) 的
+ * loopback 主机（localhost / 127.0.0.1 / [::1]，任意端口）。其余来源
+ * （含 http://tauri.localhost / 局域网地址 / 公网域名）一律不发 CORS 头。
+ */
+const CORS_ALLOWED_ORIGIN_PATTERN = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i;
+
+/**
+ * appMode === "app" 时错误码 → details.userAction 提示键的专用映射
+ * （i18n 风格键名，译文由桌面 UI 侧维护；未命中的错误码走
+ * {@link DEFAULT_USER_ACTION}）。
+ */
+const ERROR_USER_ACTIONS: Readonly<Record<string, string>> = {
+  HUB_LUA_ERROR: "hub.error.checkScript",
+  HUB_PACK_ERROR: "hub.error.checkWorkspace",
+};
+
+/** appMode === "app" 时未命中 {@link ERROR_USER_ACTIONS} 的错误码统一回落键。 */
+const DEFAULT_USER_ACTION = "hub.error.restartTts";
 
 /** stop() 等现有连接结束的宽限期；超时后强关全部连接。 */
 const STOP_GRACE_MS = 1_000;
@@ -149,6 +237,14 @@ export interface ControlServerOptions {
    * 响应发出后才触发；回调自身的失败只记日志，绝不产生未处理 rejection。
    */
   onShutdown?: () => Promise<void>;
+  /**
+   * 应用模式（UI-1b）："standalone"（独立运行，缺省）或 "app"（由桌面 UI 作为
+   * sidecar 启动）。取值由 lifecycle 层按启动旗标 --app-mode / TTS_HUB_APP_MODE
+   * 环境变量解析后传入，本模块不校验白名单（仅 "app" 触发行为差异：错误响应的
+   * details 附带 userAction 提示键）；其余取值一律按 standalone 处理。
+   * /v1/status 的 hub.appMode 原样回显该值。
+   */
+  appMode?: string;
 }
 
 /** hub 控制通道服务器句柄（{@link createControlServer} 的返回值）。 */
@@ -554,6 +650,73 @@ function isSseForwarded(msg: unknown): boolean {
   return typeof id === "number" && SSE_FORWARDED_MESSAGE_IDS.has(id);
 }
 
+/**
+ * 解析请求 Origin 头得到允许回显的 Access-Control-Allow-Origin 值（loopback CORS）。
+ * 无 Origin（同源请求）与非白名单来源返回 undefined（不发 CORS 头）；字面 "null"
+ * 与 http(s) loopback 主机（localhost / 127.0.0.1 / [::1]，任意端口）原样回显。
+ * @param origin 请求头 origin（可能 undefined）
+ * @returns 允许回显时返回 Origin 值本身；否则 undefined
+ */
+function allowedCorsOrigin(origin: string | undefined): string | undefined {
+  if (origin === undefined) {
+    return undefined;
+  }
+  if (origin === "null") {
+    return "null";
+  }
+  return CORS_ALLOWED_ORIGIN_PATTERN.test(origin) ? origin : undefined;
+}
+
+/**
+ * 从 unknown 错误中取 Node 风格的 code 属性（如 ENOENT / EISDIR），避免 any。
+ * @param err 任意抛出值
+ * @returns 字符串形式的 code；取不到时返回 undefined
+ */
+function errCode(err: unknown): string | undefined {
+  if (err instanceof Error) {
+    const code = (err as { code?: unknown }).code;
+    if (typeof code === "string") {
+      return code;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * 把 /v1/files/* 文件操作抛出的 fs 错误映射为请求侧 400（ENOENT → 文件不存在、
+ * EISDIR → 路径是目录）；其余错误原样返回（由 respondError 映射为 500）。
+ * @param err fs 操作抛出的任意值
+ * @param relPath 请求的相对路径（用于错误消息定位）
+ * @returns 映射后的错误（应作为 throw 值使用；不可映射时是原错误本身）
+ */
+function asFileAccessError(err: unknown, relPath: string): unknown {
+  const code = errCode(err);
+  if (code === "ENOENT") {
+    return new BadRequestError(`file not found: ${relPath}`);
+  }
+  if (code === "EISDIR") {
+    return new BadRequestError(`path is a directory: ${relPath}`);
+  }
+  return err;
+}
+
+/**
+ * 取文件扩展名对应的白名单 MIME（大小写不敏感）；白名单外抛 400。
+ * @param target 已解析的目标文件绝对路径
+ * @returns MIME 字符串（如 "image/png"）
+ * @throws BadRequestError 扩展名不在 {@link MIME_BY_EXTENSION} 白名单时
+ */
+function mimeForFile(target: string): string {
+  const ext = path.extname(target).replace(/^\./, "").toLowerCase();
+  const mime = MIME_BY_EXTENSION[ext];
+  if (mime === undefined) {
+    throw new BadRequestError(
+      `unsupported file type: ${ext === "" ? "(no extension)" : `"${ext}"`} (allowed: ${Object.keys(MIME_BY_EXTENSION).join("/")})`,
+    );
+  }
+  return mime;
+}
+
 // ---------------------------------------------------------------------------
 // 实现
 // ---------------------------------------------------------------------------
@@ -576,10 +739,14 @@ class ControlServerImpl implements ControlServer {
   private readonly log: (line: string) => void;
   /** 优雅退出回调（/v1/hub/shutdown 触发） */
   private readonly onShutdown: (() => Promise<void>) | undefined;
+  /** 应用模式（"standalone" | "app"；仅 "app" 时错误响应附 userAction） */
+  private readonly appMode: string;
   /** GET 路由表 */
   private readonly getRoutes: ReadonlyMap<string, RouteHandler>;
   /** POST 路由表 */
   private readonly postRoutes: ReadonlyMap<string, RouteHandler>;
+  /** PUT 路由表 */
+  private readonly putRoutes: ReadonlyMap<string, RouteHandler>;
   /** node:http 服务器实例 */
   private readonly server: Server;
   /** 当前打开的连接（stop() 超时强关用） */
@@ -599,6 +766,7 @@ class ControlServerImpl implements ControlServer {
     assertLoopbackHost(this.host);
     this.log = opts?.log ?? ((line: string) => console.error(line));
     this.onShutdown = opts?.onShutdown;
+    this.appMode = opts?.appMode ?? "standalone";
     this.getRoutes = new Map<string, RouteHandler>([
       ["/v1/status", (req, res) => this.handleStatus(req, res)],
       ["/v1/packs", (_req, res, url) => this.handlePacks(res, url)],
@@ -616,7 +784,11 @@ class ControlServerImpl implements ControlServer {
       ["/v1/push", (req, res) => this.handlePush(req, res)],
       ["/v1/test/run", (req, res) => this.handleTestRun(req, res)],
       ["/v1/pack/build", (req, res) => this.handlePackBuild(req, res)],
+      ["/v1/files/read", (req, res) => this.handleFilesRead(req, res)],
       ["/v1/hub/shutdown", (_req, res) => this.handleShutdown(res)],
+    ]);
+    this.putRoutes = new Map<string, RouteHandler>([
+      ["/v1/files/write", (req, res) => this.handleFilesWrite(req, res)],
     ]);
     this.server = createServer((req, res) => {
       this.onRequest(req, res);
@@ -708,8 +880,11 @@ class ControlServerImpl implements ControlServer {
   }
 
   /**
-   * 路由分发：未匹配路径 → 404；路径存在但方法不对 → 405（带 Allow 头）；
-   * 处理函数抛出的异常按统一错误映射响应。
+   * 路由分发：入口先做 loopback CORS 中间件（放行来源回显
+   * Access-Control-Allow-Origin，非放行来源不发 CORS 头）与 OPTIONS 预检
+   * （204 + 允许的方法 / 请求头，不进路由表）；随后按方法分流到 GET / POST /
+   * PUT 三张路由表——未匹配路径 → 404；路径存在但方法不对 → 405（Allow 头聚合
+   * 三张表的命中）；处理函数抛出的异常按统一错误映射响应。
    * @param req 进入的请求
    * @param res 目标响应
    */
@@ -718,19 +893,47 @@ class ControlServerImpl implements ControlServer {
     try {
       url = new URL(req.url ?? "/", "http://127.0.0.1");
     } catch {
-      sendError(res, 400, "HUB_BAD_REQUEST", "malformed request URL");
+      this.sendAppError(res, 400, "HUB_BAD_REQUEST", "malformed request URL");
       return;
     }
     const pathname = url.pathname;
     try {
+      // —— loopback CORS 中间件（UI-1b）：放行来源回显 ACAO；其余来源不发头 ——
+      // （用 setHeader 而不是 writeHead：与后续各 handler 的 writeHead 合并发送）
+      const allowOrigin = allowedCorsOrigin(req.headers.origin);
+      if (allowOrigin !== undefined) {
+        res.setHeader("Access-Control-Allow-Origin", allowOrigin);
+        res.setHeader("Vary", "Origin"); // ACAO 随 Origin 变化，提示缓存按请求区分
+      }
       const method = req.method ?? "";
-      const table = method === "GET" ? this.getRoutes : method === "POST" ? this.postRoutes : undefined;
+      if (method === "OPTIONS") {
+        // —— 预检：204 + 允许的方法 / 请求头（204 不允许携带响应体）——
+        res.writeHead(204, {
+          "Access-Control-Allow-Methods": "GET,POST,PUT,OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+          "Content-Length": "0",
+        });
+        res.end();
+        return;
+      }
+      const table =
+        method === "GET"
+          ? this.getRoutes
+          : method === "POST"
+            ? this.postRoutes
+            : method === "PUT"
+              ? this.putRoutes
+              : undefined;
       const handler = table?.get(pathname);
       if (handler !== undefined) {
         await handler(req, res, url);
         return;
       }
-      if (this.getRoutes.has(pathname) || this.postRoutes.has(pathname)) {
+      if (
+        this.getRoutes.has(pathname) ||
+        this.postRoutes.has(pathname) ||
+        this.putRoutes.has(pathname)
+      ) {
         const allow: string[] = [];
         if (this.getRoutes.has(pathname)) {
           allow.push("GET");
@@ -738,7 +941,10 @@ class ControlServerImpl implements ControlServer {
         if (this.postRoutes.has(pathname)) {
           allow.push("POST");
         }
-        sendError(
+        if (this.putRoutes.has(pathname)) {
+          allow.push("PUT");
+        }
+        this.sendAppError(
           res,
           405,
           "HUB_METHOD_NOT_ALLOWED",
@@ -748,14 +954,52 @@ class ControlServerImpl implements ControlServer {
         );
         return;
       }
-      sendError(res, 404, "HUB_NOT_FOUND", `no route for ${pathname}`);
+      this.sendAppError(res, 404, "HUB_NOT_FOUND", `no route for ${pathname}`);
     } catch (err) {
+      if (err instanceof PathEscapeError) {
+        this.sendAppError(res, 400, err.code, err.message);
+        return;
+      }
       if (err instanceof BadRequestError) {
-        sendError(res, 400, "HUB_BAD_REQUEST", err.message);
+        this.sendAppError(res, 400, "HUB_BAD_REQUEST", err.message);
         return;
       }
       this.respondError(res, err);
     }
+  }
+
+  /**
+   * 统一错误响应出口（appMode 感知）：appMode === "app"（桌面 sidecar 形态）时
+   * 在 details 里附带 userAction 提示键（按错误码查 {@link ERROR_USER_ACTIONS}，
+   * 未命中回落 {@link DEFAULT_USER_ACTION}），UI 拿到后直接渲染可操作提示；
+   * standalone 形态不带 userAction，details 原样透传。
+   *
+   * 所有类内错误响应（含请求侧 4xx 与 {@link respondError} 的异常映射）都经由
+   * 本方法发出，保证 userAction 的有无只取决于 appMode，与触发路径无关。
+   * @param res 目标响应
+   * @param status HTTP 状态码（4xx / 5xx）
+   * @param code 机器可读错误码
+   * @param message 错误描述
+   * @param details 可选结构化细节（undefined 字段不进入 JSON）
+   * @param headers 可选附加响应头（如 405 的 Allow）
+   */
+  private sendAppError(
+    res: ServerResponse,
+    status: number,
+    code: string,
+    message: string,
+    details?: Record<string, unknown>,
+    headers?: Record<string, string>,
+  ): void {
+    if (this.appMode === "app") {
+      const merged: Record<string, unknown> = {
+        ...(details ?? {}),
+        userAction: ERROR_USER_ACTIONS[code] ?? DEFAULT_USER_ACTION,
+      };
+      sendError(res, status, code, message, merged, headers);
+      return;
+    }
+    sendError(res, status, code, message, details, headers);
   }
 
   /**
@@ -776,48 +1020,52 @@ class ControlServerImpl implements ControlServer {
       if (err.endCol !== undefined) {
         details.endCol = err.endCol;
       }
-      sendError(res, 400, "HUB_LUA_ERROR", err.message, details);
+      this.sendAppError(res, 400, "HUB_LUA_ERROR", err.message, details);
       return;
     }
     if (err instanceof PackError) {
-      sendError(res, 400, "HUB_PACK_ERROR", err.message, { packCode: err.code });
+      this.sendAppError(res, 400, "HUB_PACK_ERROR", err.message, { packCode: err.code });
       return;
     }
-    sendError(res, 500, "HUB_INTERNAL_ERROR", describeError(err));
+    this.sendAppError(res, 500, "HUB_INTERNAL_ERROR", describeError(err));
   }
 
   /**
-   * 读取并把 POST 请求体解析为 JSON 对象；所有请求侧问题（非 JSON 媒体类型 /
-   * 超限 / 非法 JSON / 非对象）在此直接响应错误并返回 undefined。
+   * 读取并把读体路由（POST / PUT）的请求体解析为 JSON 对象；所有请求侧问题
+   * （非 JSON 媒体类型 / 超限 / 非法 JSON / 非对象）在此直接响应错误并返回
+   * undefined。
    * @param req 进入的请求
    * @param res 目标响应
+   * @param maxBytes 请求体字节上限（缺省 1MB；/v1/files/write 传入放宽值，见
+   *   {@link MAX_WRITE_BODY_BYTES}）
    * @returns 解析出的键值对象；请求侧问题已响应（或连接已断）时 undefined
    */
   private async readJsonBody(
     req: IncomingMessage,
     res: ServerResponse,
+    maxBytes: number = MAX_BODY_BYTES,
   ): Promise<Record<string, unknown> | undefined> {
     if (!isJsonContentType(req.headers["content-type"])) {
-      sendError(res, 415, "HUB_UNSUPPORTED_MEDIA_TYPE", "content-type must be application/json");
+      this.sendAppError(res, 415, "HUB_UNSUPPORTED_MEDIA_TYPE", "content-type must be application/json");
       return undefined;
     }
-    const raw = await readBody(req, MAX_BODY_BYTES);
+    const raw = await readBody(req, maxBytes);
     if (raw.kind === "aborted") {
       return undefined; // 连接已断，无从响应
     }
     if (raw.kind === "too-large") {
-      sendError(res, 413, "HUB_PAYLOAD_TOO_LARGE", `request body exceeds ${MAX_BODY_BYTES} bytes`);
+      this.sendAppError(res, 413, "HUB_PAYLOAD_TOO_LARGE", `request body exceeds ${maxBytes} bytes`);
       return undefined;
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw.buffer.toString("utf8"));
     } catch {
-      sendError(res, 400, "HUB_BAD_REQUEST", "request body is not valid JSON");
+      this.sendAppError(res, 400, "HUB_BAD_REQUEST", "request body is not valid JSON");
       return undefined;
     }
     if (!isPlainObject(parsed)) {
-      sendError(res, 400, "HUB_BAD_REQUEST", "request body must be a JSON object");
+      this.sendAppError(res, 400, "HUB_BAD_REQUEST", "request body must be a JSON object");
       return undefined;
     }
     return parsed;
@@ -828,9 +1076,12 @@ class ControlServerImpl implements ControlServer {
   /**
    * GET /v1/status：hub 健康 + TTS 连接状态。
    *
-   * hub 字段来自 daemon.stats()（uptimeMs 现算，负值截为 0）；tts.connected 通过
-   * 执行 luaGetVersion 探测（2s 超时），成功时顺带探测对象数（失败只影响可选的
-   * objects 字段）。探测失败不是路由错误——仍 200，connected=false。
+   * hub 字段来自 daemon.stats()（uptimeMs 现算，负值截为 0）+ 本进程 package.json
+   * 的 version 与配置的 appMode（UI-1b：桌面 UI 用 hub.version 做"旧版 hub 功能
+   * 降级"判断，用 hub.appMode 区分 sidecar 形态；旧版 hub 无这两个字段，UI 侧
+   * 按缺失降级处理）。tts.connected 通过执行 luaGetVersion 探测（2s 超时），成功
+   * 时顺带探测对象数（失败只影响可选的 objects 字段）。探测失败不是路由错误——
+   * 仍 200，connected=false。
    * @param _req 进入的请求（未使用）
    * @param res 目标响应
    */
@@ -867,6 +1118,8 @@ class ControlServerImpl implements ControlServer {
         inprocClients: stats.inprocClients,
         startedAt: stats.startedAt,
         uptimeMs: Math.max(0, Date.now() - stats.startedAt),
+        version: pkg.version,
+        appMode: this.appMode,
       },
       tts,
     });
@@ -1133,7 +1386,7 @@ class ControlServerImpl implements ControlServer {
     }
     const root = requireString(body, "root");
     if (body.confirm !== true) {
-      sendError(res, 400, "HUB_CONFIRM_REQUIRED", "this operation requires confirm:true in the request body");
+      this.sendAppError(res, 400, "HUB_CONFIRM_REQUIRED", "this operation requires confirm:true in the request body");
       return;
     }
     const dryRun = optionalBoolean(body, "dryRun") ?? false;
@@ -1287,6 +1540,174 @@ class ControlServerImpl implements ControlServer {
       response.headerLength = bson.headerLength;
     }
     sendJson(res, 200, response);
+  }
+
+  // -- UI-1b 文件路由（不注册为 MCP 工具——红线 15）---------------------------
+
+  /**
+   * 校验 root 是已注册图包根：`<packsRoot>/.registry.yaml`（packsRoot 取 root 的
+   * 父目录）中存在 dir = root 基名的条目。注册表模型见 src/pack/registry.ts
+   * （图包永远是 packs_root 下的一级子目录）。
+   * @param root 请求体里的工作区根目录
+   * @throws BadRequestError root 不在注册表中（或注册表非法 / IO 失败——后者经
+   *                         respondError 以 400 HUB_PACK_ERROR 透传）
+   */
+  private async assertRegisteredPackRoot(root: string): Promise<void> {
+    const rootAbs = path.resolve(root);
+    const packsRoot = path.dirname(rootAbs);
+    const dir = path.basename(rootAbs);
+    const entry = await findPack(packsRoot, dir);
+    if (entry === null) {
+      throw new BadRequestError(
+        `root is not a registered pack workspace: ${rootAbs} (no entry "${dir}" in ${registryPath(packsRoot)})`,
+      );
+    }
+  }
+
+  /**
+   * POST /v1/files/read：读工作区 root 内的一个文件，返回 base64（UI-1b，卡牌 /
+   * 素材本地预览用）。**不注册为 MCP 工具**（红线 15：防 MCP 越权读宿主机文件）。
+   *
+   * 流程：字段校验（root / path 非空字符串）→ root 注册表校验（400）→
+   * {@link resolveWithinRoot} 四层路径防护（HUB_PATH_ESCAPE → 400）→ 扩展名
+   * MIME 白名单（400）→ stat（ENOENT → 400；非普通文件 → 400；>20MB →
+   * 413 HUB_FILE_TOO_LARGE）→ readFile → `{base64, mime, size}`。
+   * @param req 进入的请求
+   * @param res 目标响应
+   */
+  private async handleFilesRead(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.readJsonBody(req, res);
+    if (body === undefined) {
+      return;
+    }
+    const root = requireString(body, "root");
+    const relPath = requireString(body, "path");
+    await this.assertRegisteredPackRoot(root);
+    const target = await resolveWithinRoot(root, relPath);
+    const mime = mimeForFile(target);
+    let info: Stats;
+    try {
+      info = await stat(target);
+    } catch (err) {
+      throw asFileAccessError(err, relPath);
+    }
+    if (!info.isFile()) {
+      throw new BadRequestError(`not a regular file: ${relPath}`);
+    }
+    if (info.size > MAX_READ_FILE_BYTES) {
+      this.sendAppError(
+        res,
+        413,
+        "HUB_FILE_TOO_LARGE",
+        `file exceeds the ${MAX_READ_FILE_BYTES}-byte limit for /v1/files/read`,
+      );
+      return;
+    }
+    let content: Buffer;
+    try {
+      content = await readFile(target);
+    } catch (err) {
+      throw asFileAccessError(err, relPath);
+    }
+    sendJson(res, 200, { base64: content.toString("base64"), mime, size: content.length });
+  }
+
+  /**
+   * PUT /v1/files/write：把一个文本文件写进工作区 root（UI-1b，工作台保存脚本
+   * 用）。**不注册为 MCP 工具**（红线 15）。方法用 PUT 表达幂等覆写语义。
+   *
+   * 流程与约束：
+   * 1. 字段校验：root / path 非空字符串；content 必须是字符串（**允许空串**——
+   *    清空文件是合法操作）；baseSha256 可选、必须 64 位 hex（不区分大小写）；
+   * 2. content 仅文本：含 null 字节 → 400；UTF-8 字节数 > 1MB →
+   *    413 HUB_FILE_TOO_LARGE（请求体上限放宽到 8MB 只为让超限 content 落到本
+   *    专用错误码，见 {@link MAX_WRITE_BODY_BYTES}）；
+   * 3. {@link resolveWithinRoot} 同套四层路径防护（HUB_PATH_ESCAPE → 400；root
+   *    不要求已注册——按方案 §8.4 仅 read 校验注册表）；
+   * 4. 父目录必须已存在（不隐式 mkdir，防拼写笔误静默建目录树）→ 不存在 400；
+   * 5. 乐观锁：baseSha256 提供时与当前文件 sha256 比对（目标不存在视为必然
+   *    冲突——创建新文件请不要带 baseSha256），不符 409 HUB_CONFLICT，
+   *    details.currentSha256 携带当前值供 UI 重新对齐；
+   * 6. writeFile 覆写（不存在则创建）→ `{sha256, size}`（对写入后的 UTF-8
+   *    字节计算，与下次乐观锁基准一致）。
+   * @param req 进入的请求
+   * @param res 目标响应
+   */
+  private async handleFilesWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.readJsonBody(req, res, MAX_WRITE_BODY_BYTES);
+    if (body === undefined) {
+      return;
+    }
+    const root = requireString(body, "root");
+    const relPath = requireString(body, "path");
+    const content = body.content;
+    if (typeof content !== "string") {
+      throw new BadRequestError("missing or invalid field: content (string required; empty string allowed)");
+    }
+    if (content.includes("\0")) {
+      throw new BadRequestError("invalid field: content (plain text without null bytes required)");
+    }
+    const contentBytes = Buffer.byteLength(content, "utf8");
+    if (contentBytes > MAX_WRITE_CONTENT_BYTES) {
+      this.sendAppError(
+        res,
+        413,
+        "HUB_FILE_TOO_LARGE",
+        `content exceeds the ${MAX_WRITE_CONTENT_BYTES}-byte limit for /v1/files/write`,
+      );
+      return;
+    }
+    const baseSha256 = optionalString(body, "baseSha256");
+    if (baseSha256 !== undefined && !/^[0-9a-f]{64}$/i.test(baseSha256)) {
+      throw new BadRequestError("invalid field: baseSha256 (64-character hex sha256 required)");
+    }
+    const target = await resolveWithinRoot(root, relPath);
+    const parent = path.dirname(target);
+    try {
+      const parentInfo = await stat(parent);
+      if (!parentInfo.isDirectory()) {
+        throw new BadRequestError(`parent path is not a directory: ${relPath}`);
+      }
+    } catch (err) {
+      if (err instanceof BadRequestError) {
+        throw err;
+      }
+      if (errCode(err) === "ENOENT") {
+        throw new BadRequestError(`parent directory does not exist: ${relPath}`);
+      }
+      throw err;
+    }
+    if (baseSha256 !== undefined) {
+      let currentSha: string | undefined;
+      try {
+        currentSha = createHash("sha256").update(await readFile(target)).digest("hex");
+      } catch (err) {
+        if (errCode(err) !== "ENOENT") {
+          throw asFileAccessError(err, relPath);
+        }
+        // 目标不存在：currentSha 保持 undefined，与任何 baseSha256 比对都是冲突
+      }
+      if (currentSha !== baseSha256.toLowerCase()) {
+        this.sendAppError(
+          res,
+          409,
+          "HUB_CONFLICT",
+          "baseSha256 does not match the current file content (optimistic-lock conflict)",
+          currentSha !== undefined ? { currentSha256: currentSha } : undefined,
+        );
+        return;
+      }
+    }
+    const buffer = Buffer.from(content, "utf8");
+    try {
+      await writeFile(target, buffer);
+    } catch (err) {
+      throw asFileAccessError(err, relPath);
+    }
+    sendJson(res, 200, {
+      sha256: createHash("sha256").update(buffer).digest("hex"),
+      size: buffer.length,
+    });
   }
 
   /**

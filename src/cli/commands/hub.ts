@@ -23,11 +23,14 @@
  * 本模块使用的 i18n 键（locales/*.json 双语镜像；缺键时 t() 原样输出键名）：
  * - 静态：`cli.command.hub.description`、`cli.hub.option.port` /
  *   `cli.hub.option.editorPort` / `cli.hub.option.tcpPort` /
- *   `cli.hub.option.wsPort` / `cli.hub.option.logFile`、`cli.hub.stopped`；
+ *   `cli.hub.option.wsPort` / `cli.hub.option.logFile` /
+ *   `cli.hub.option.appMode`、`cli.hub.stopped`；
  * - 插值：`cli.hub.started` {controlPort} {editorPort} {tcpPort} {wsPort}；
  * - 复用既有键：`cli.review.prepare.invalidPort` {value}（端口非法提示，文案
- *   通用：端口无效：{value}（需为 1..65535 的整数））、`error.generic` {message}
- *   （非端口占用的启动失败统一出口）。
+ *   通用：端口无效：{value}（需为 1..65535 的整数））、
+ *   `cli.review.prepare.invalidOption` {value} {allowed}（选项值不在白名单的
+ *   提示，--app-mode 校验用）、`error.generic` {message}（非端口占用的启动
+ *   失败统一出口）。
  */
 
 import { Command } from "commander";
@@ -53,11 +56,21 @@ interface HubCliOptions {
   wsPort?: string;
   /** 日志文件路径（追加写；缺省只写 stdout） */
   logFile?: string;
+  /** 应用模式（字符串形式，action 内校验白名单 ["standalone", "app"]） */
+  appMode?: string;
 }
 
 // ---------------------------------------------------------------------------
 // 内部工具
 // ---------------------------------------------------------------------------
+
+/**
+ * `--app-mode` 的合法取值白名单（v0.8.0）：
+ * - "standalone"：独立运行（CLI 手动启动，缺省）；
+ * - "app"：由桌面 UI 作 sidecar 启动（控制通道错误体 details 会附 userAction
+ *   提示键，供 UI 直接渲染，见 docs/schemas/hub-control.md §3.2）。
+ */
+const APP_MODE_WHITELIST: readonly string[] = ["standalone", "app"];
 
 /**
  * 解析端口选项：字符串 → 1..65535 的整数；未提供选项时返回 undefined
@@ -79,16 +92,46 @@ function parsePortOption(value: string | undefined): number | undefined {
   return port;
 }
 
+/**
+ * 解析 --app-mode 选项：须命中白名单 ["standalone", "app"]；未提供选项时返回
+ * undefined 表示"用 lifecycle 的解析链"（参数 > 环境变量 TTS_HUB_APP_MODE >
+ * 缺省 "standalone"，见 src/hub/lifecycle.ts）。
+ *
+ * @param value 命令行原始值；undefined 表示未提供该选项
+ * @returns 合法的应用模式；未提供选项时 undefined
+ * @returns 非法值时向 stderr 输出本地化提示并 process.exit(1)（不返回）
+ */
+function parseAppModeOption(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!APP_MODE_WHITELIST.includes(value)) {
+    console.error(
+      t("cli.review.prepare.invalidOption", {
+        value,
+        allowed: APP_MODE_WHITELIST.join(" / "),
+      }),
+    );
+    process.exit(1);
+  }
+  return value;
+}
+
 // ---------------------------------------------------------------------------
 // 子命令
 // ---------------------------------------------------------------------------
 
 /**
  * `tts hub [--port <n>] [--editor-port <n>] [--tcp-port <n>] [--ws-port <n>]
- * [--log-file <路径>]`：前台常驻的 hub 进程（控制通道 + 协议扇出）。
+ * [--log-file <路径>] [--app-mode <standalone|app>]`：前台常驻的 hub 进程
+ * （控制通道 + 协议扇出）。
  *
  * 启动成功打印一行 started（含实际端口），随后常驻；SIGINT / SIGTERM /
  * /v1/hub/shutdown 触发优雅停止后打印 stopped 并以 0 退出。
+ *
+ * --app-mode（v0.8.0）：standalone=独立运行（缺省）；app=由桌面 UI 作 sidecar
+ * 启动（控制通道错误体 details 附 userAction 提示键）。`tts-hub` bin 保持零
+ * 旗标，同语义经环境变量 TTS_HUB_APP_MODE 透传。
  */
 export const hubCommand: Command = new Command("hub")
   .description(t("cli.command.hub.description"))
@@ -97,11 +140,13 @@ export const hubCommand: Command = new Command("hub")
   .option("--tcp-port <number>", t("cli.hub.option.tcpPort"))
   .option("--ws-port <number>", t("cli.hub.option.wsPort"))
   .option("--log-file <path>", t("cli.hub.option.logFile"))
+  .option("--app-mode <mode>", t("cli.hub.option.appMode"))
   .action(async (opts: HubCliOptions) => {
     const controlPort = parsePortOption(opts.port);
     const editorPort = parsePortOption(opts.editorPort) ?? EDITOR_PORT;
     const tcpPort = parsePortOption(opts.tcpPort) ?? HUB_TCP_PORT;
     const wsPort = parsePortOption(opts.wsPort) ?? HUB_WS_PORT;
+    const appMode = parseAppModeOption(opts.appMode);
 
     const hub = runHubProcess({
       ...(controlPort !== undefined ? { controlPort } : {}),
@@ -109,6 +154,7 @@ export const hubCommand: Command = new Command("hub")
       tcpPort,
       wsPort,
       ...(opts.logFile !== undefined ? { logFile: opts.logFile } : {}),
+      ...(appMode !== undefined ? { appMode } : {}),
     });
 
     try {

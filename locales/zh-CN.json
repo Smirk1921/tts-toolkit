@@ -757,7 +757,8 @@
         "needB": "请用 --b 指定源B（新版渲染）目录：它是使用方的语义决定，本工具不猜",
         "noDeck": "在 {root} 下没有找到任何 deck 目录，请先用 tts import / tts deck 建卡堆",
         "multipleDecks": "decks/ 下有多个卡堆（{names}），请用 --deck 指定要审批的那个",
-        "invalidPort": "端口无效：{value}（需为 1..65535 的整数）"
+        "invalidPort": "端口无效：{value}（需为 1..65535 的整数）",
+        "invalidOption": "选项值无效：{value}（允许的取值：{allowed}）"
       },
       "status": {
         "needApprovalRoot": "请用 --approval-root 指定审批工具仓库根（含 agent.py），或改用 --server 走 HTTP"
@@ -785,7 +786,8 @@
         "editorPort": "TTS 编辑器端口（缺省 39998，由 TTS 主动连入）",
         "tcpPort": "TCP 扇出端口（缺省 39997）",
         "wsPort": "WebSocket 扇出端口（缺省 39996）",
-        "logFile": "日志文件路径（追加写入；缺省日志只写 stdout）"
+        "logFile": "日志文件路径（追加写入；缺省日志只写 stdout）",
+        "appMode": "应用模式（standalone=独立运行；app=由桌面 UI 作 sidecar 启动，错误体含 userAction 提示键）"
       },
       "started": "hub 已启动：控制通道 http://127.0.0.1:{controlPort}/v1；编辑器端口 {editorPort}；TCP 扇出 {tcpPort}；WS 扇出 {wsPort}（Ctrl+C 停止）",
       "stopped": "hub 已停止"

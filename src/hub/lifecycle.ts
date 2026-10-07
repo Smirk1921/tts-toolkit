@@ -11,6 +11,10 @@
  *   文件流；幂等（SIGINT 与 /v1/hub/shutdown 同时触发时共享同一次停止流程）；
  * - SIGINT/SIGTERM 用 process.once 注册，各只触发一次 stop()；
  *   /v1/hub/shutdown 路由的 onShutdown 回调走同一 {@link HubProcess.stop}；
+ * - 应用模式（v0.8.0）：opts.appMode 优先，其次环境变量 TTS_HUB_APP_MODE
+ *   （`tts-hub` bin 保持零旗标，桌面 UI sidecar 场景经环境变量透传），都未
+ *   提供时缺省 "standalone"；解析结果透传给控制通道（app 模式下错误体
+ *   details 附 userAction 提示键，见 docs/schemas/hub-control.md §3.2）；
  * - 日志：JSON Lines 英文 `{"ts":...,"level":"info|warn|error","msg":"...",...}`；
  *   opts.logFile 提供时同时写 stdout 与文件（追加）；日志文件不可用时降级为
  *   仅 stdout（日志路径问题不阻塞 hub 启动，降级事件以 warn 记录）。
@@ -45,6 +49,24 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/**
+ * 解析应用模式：显式参数优先，其次环境变量 TTS_HUB_APP_MODE（`tts-hub` bin
+ * 保持零旗标、不经 commander，桌面 UI sidecar 场景经环境变量透传），都未提供
+ * 时缺省 "standalone"；空白环境变量视为未提供。取值白名单（"standalone" /
+ * "app"）的校验在 CLI 层（src/cli/commands/hub.ts 的 parseAppModeOption）；
+ * 这里只做缺省解析，不吞掉显式传入的值。
+ *
+ * @param explicit 调用方显式给出的 appMode（未给时 undefined）
+ * @returns 生效的应用模式（"standalone" | "app" | 调用方显式传入值）
+ */
+function resolveAppMode(explicit: string | undefined): string {
+  if (explicit !== undefined) {
+    return explicit;
+  }
+  const env = process.env.TTS_HUB_APP_MODE;
+  return env !== undefined && env !== "" ? env : "standalone";
+}
+
 /** {@link runHubProcess} 的选项。 */
 export interface HubProcessOptions {
   /** 编辑器侧监听端口（TTS 主动连过来）；缺省由 HubDaemon 决定（39998）。 */
@@ -57,6 +79,12 @@ export interface HubProcessOptions {
   controlPort?: number;
   /** 日志文件路径（追加写）；缺省只写 stdout。 */
   logFile?: string;
+  /**
+   * 应用模式："standalone"（独立运行）或 "app"（桌面 UI 作 sidecar 启动，
+   * 控制通道错误体 details 附 userAction 提示键）。优先级：本参数 >
+   * 环境变量 TTS_HUB_APP_MODE > "standalone"（见 {@link resolveAppMode}）。
+   */
+  appMode?: string;
 }
 
 /** 一个已组装、可启动的 hub 进程句柄（{@link runHubProcess} 的返回值）。 */
@@ -103,6 +131,8 @@ class HubProcessImpl implements HubProcess {
   private readonly wsPort: number | undefined;
   private readonly configuredControlPort: number;
   private readonly logFile: string | undefined;
+  /** 生效的应用模式（构造时按 参数 > TTS_HUB_APP_MODE > "standalone" 解析）。 */
+  private readonly appMode: string;
 
   /** stopped() 返回的 promise；构造时创建，停止完成（或 start 失败）时 resolve。 */
   private readonly stoppedPromise: Promise<void>;
@@ -139,6 +169,7 @@ class HubProcessImpl implements HubProcess {
     this.wsPort = opts?.wsPort;
     this.configuredControlPort = opts?.controlPort ?? DEFAULT_CONTROL_PORT;
     this.logFile = opts?.logFile;
+    this.appMode = resolveAppMode(opts?.appMode);
     this.stoppedPromise = new Promise<void>((resolve) => {
       this.resolveStopped = resolve;
     });
@@ -177,6 +208,7 @@ class HubProcessImpl implements HubProcess {
       host: CONTROL_HOST,
       log: (line: string) => this.writeLine(line),
       onShutdown: () => this.stop(),
+      appMode: this.appMode,
     });
     try {
       await control.start();

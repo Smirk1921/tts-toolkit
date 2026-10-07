@@ -40,6 +40,7 @@ import { createHash, createHmac } from "node:crypto";
 
 import { request } from "undici";
 
+import pkg from "../../package.json" with { type: "json" };
 import { t } from "../i18n/index.js";
 import { PackError } from "../pack/packyaml.js";
 import { DEFAULT_UPLOAD_TIMEOUT_MS, parseUploadOptions, probeHttpLiveness, safeObjectName, validateUploadFiles } from "./types.js";
@@ -59,7 +60,7 @@ const ALGORITHM = "AWS4-HMAC-SHA256";
 export const S3_MAX_PUT_BYTES = 5 * 1024 ** 3;
 
 /** 非实体请求 UA（与 src/assets/check.ts 保持一致） */
-const USER_AGENT = "tts-toolkit/0.1.0";
+const USER_AGENT = `tts-toolkit/${pkg.version}`;
 
 /** 常见扩展名 → MIME（缺省 application/octet-stream） */
 const MIME_BY_EXTENSION: Readonly<Record<string, string>> = Object.freeze({

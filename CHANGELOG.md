@@ -8,6 +8,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Phase tags (`v0.x.0-phaseN`) are annotated on the corresponding commits for
 > historical reference; the npm-published version drops the `-phaseN` suffix.
 
+## [0.8.0] - 2026-10-08 — Desktop UI + hub contract extension
+
+### Added
+
+- **hub**: 2 new routes (`POST /v1/files/read`, `PUT /v1/files/write`) for
+  desktop UI file operations, with path-traversal protection and optimistic
+  locking via sha256.
+- **hub**: `--app-mode` CLI flag — error responses now include
+  `details.userAction` for UI rendering.
+- **hub**: `/v1/status` response gains `hub.version` and `hub.appMode` fields.
+- **hub**: loopback CORS headers for Vite dev-server → hub communication.
+- **tts-desktop** (separate repo): Tauri 2 + React 18 desktop workbench,
+  implementing the Round-03 blueprint design (5 layers, 9 components, SSE event
+  flow, ConfirmGate for all destructive ops).
+
+### Fixed
+
+- **version**: unified 7 hardcoded version strings to read from `pkg.version`
+  (cli/index.ts, mcp/server.ts, archive/ttsmod.ts, archive/detect.ts,
+  assets/check.ts, assets/fetch.ts, host/s3.ts). Previously `tts --version`
+  printed `0.1.0` regardless of `package.json`. All sites now follow the
+  pattern established in `hub/control.ts` (`import pkg from "../../package.json"
+  with { type: "json" }`); future version bumps only need to update
+  `package.json`.
+
+### Test baseline
+
+- 2057 unit tests passing locally (with `TTS_EXTRACTED_DIR`), 2024 in CI
+  (fixture-dependent tests skip), 0 failed.
+
+## [0.7.1] - 2026-10-07 — Republish via CI with corrected dependencies
+
+### Fixed
+
+- **packaging**: moved `execa` from `devDependencies` to `dependencies` —
+  `npm install -g tts-toolkit@0.7.0` previously failed with
+  `ERR_MODULE_NOT_FOUND` when any CLI command tried to spawn kpsteam or other
+  subprocesses. v0.7.0 was deprecated on npm in favor of this release.
+
+### Changed
+
+- **release**: switched from manual `npm publish` to GitHub Actions
+  `release.yml` (tag-triggered, `npm publish --provenance --access public`).
+  v0.7.1 is the first version published via CI.
+
 ## [0.7.0] - 2026-10-06 — Phase 7: Lua test runner + Workshop publish
 
 ### Added

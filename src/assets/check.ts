@@ -25,6 +25,8 @@
 import { ProxyAgent, request } from "undici";
 import { z } from "zod";
 
+import pkg from "../../package.json" with { type: "json" };
+
 // ---------------------------------------------------------------------------
 // 常量
 // ---------------------------------------------------------------------------
@@ -39,7 +41,7 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const HEAD_UNSUPPORTED_STATUSES: readonly number[] = [405, 501];
 
 /** 请求 UA（部分 CDN 对空 UA 更苛刻；保持 ASCII，避免 header 编码问题） */
-const USER_AGENT = "tts-toolkit/0.1.0";
+const USER_AGENT = `tts-toolkit/${pkg.version}`;
 
 /**
  * 硬性超时相对 timeoutMs 的宽限（毫秒）。

@@ -42,6 +42,7 @@ import path from "node:path";
 
 import { ProxyAgent, request } from "undici";
 
+import pkg from "../../package.json" with { type: "json" };
 import { t } from "../i18n/index.js";
 import { sanitizeUrl } from "./cachekey.js";
 
@@ -289,7 +290,7 @@ export async function httpProbeContentType(
             dispatcher,
             headersTimeout: timeoutMs,
             bodyTimeout: timeoutMs,
-            headers: { "user-agent": "tts-toolkit/0.1.0" },
+            headers: { "user-agent": `tts-toolkit/${pkg.version}` },
           });
           if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
             const location = res.headers.location;

@@ -176,7 +176,7 @@ cd tts-toolkit && npm install && npm run build
 
 # 3. Start the hub daemon (keeps running in this terminal)
 node dist/cli/hub-main.js
-#    or, after npm install -g tts-toolkit:  tts-hub
+#    or, after npm install -g @smirk1921/tts-toolkit:  tts-hub
 
 # 4. VSCode: install the tts-lua-hub fork per the steps above,
 #    set ttslua.hub.fallback = "prompt", reload window

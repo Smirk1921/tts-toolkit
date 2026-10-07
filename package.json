@@ -1,6 +1,6 @@
 {
-  "name": "tts-toolkit",
-  "version": "0.7.0",
+  "name": "@smirk1921/tts-toolkit",
+  "version": "0.7.1",
   "description": "Toolchain for Tabletop Simulator mod creators: pack workspace, atlas slicing, git-based version control, hub daemon, MCP integration, Lua test runner, and Steam Workshop publishing.",
   "author": "Smirk1921",
   "license": "MIT",
@@ -55,6 +55,7 @@
     "bson": "^7.3.3",
     "chokidar": "^4.0.3",
     "commander": "^15.0.0",
+    "execa": "^10.0.1",
     "luabundle": "^1.7.0",
     "sharp": "^0.35.5",
     "undici": "^7",
@@ -63,7 +64,6 @@
   },
   "devDependencies": {
     "@types/node": "^24",
-    "execa": "^10.0.1",
     "tsx": "^4",
     "typescript": "^5",
     "vitest": "^3"

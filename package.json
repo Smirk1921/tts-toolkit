@@ -1,5 +1,5 @@
 {
-  "name": "tts-toolkit",
+  "name": "@smirk1921/tts-toolkit",
   "version": "0.7.0",
   "description": "Toolchain for Tabletop Simulator mod creators: pack workspace, atlas slicing, git-based version control, hub daemon, MCP integration, Lua test runner, and Steam Workshop publishing.",
   "author": "Smirk1921",

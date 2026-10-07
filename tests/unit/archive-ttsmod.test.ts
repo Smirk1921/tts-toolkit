@@ -42,6 +42,7 @@ import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import pkg from '../../package.json' with { type: 'json' };
 import { cacheFileName, sanitizeUrl } from '../../src/archive/cachekey.js';
 import { exportTtsmod, importTtsmod, readZip, ttsmodFileName, writeZip } from '../../src/archive/ttsmod.js';
 import { PackError } from '../../src/pack/packyaml.js';
@@ -544,7 +545,7 @@ describe('exportTtsmod manifest（3B.4）与 README（3B.9）', () => {
     expect(result.manifestIncluded).toBe(true);
     expect(result.manifest).toMatchObject({
       manifest_version: 1,
-      tool: { name: 'tts-toolkit', version: '0.1.0' },
+      tool: { name: 'tts-toolkit', version: pkg.version },
       created_at: FIXED_TIME.toISOString(),
       pack: { name: 'M Pack', version: '1.2.0', workshop_id: 777, source_mod_id: 555, save_json_target: 'workshop' },
     });

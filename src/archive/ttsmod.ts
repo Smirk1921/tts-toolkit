@@ -87,6 +87,7 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { crc32, deflateRawSync, inflateRawSync } from "node:zlib";
 
+import pkg from "../../package.json" with { type: "json" };
 import { getLang, initI18n, t, type Lang } from "../i18n/index.js";
 import { PackError } from "../pack/packyaml.js";
 import { cacheFileName, sanitizeUrl } from "./cachekey.js";
@@ -106,8 +107,8 @@ import {
 /** 工具名（manifest 用；与 package.json 的 name 一致） */
 const TOOL_NAME = "tts-toolkit";
 
-/** 工具版本（manifest 用；与 package.json / CLI 的 version 保持同步） */
-const TOOL_VERSION = "0.1.0";
+/** 工具版本（manifest 用；与 package.json / CLI 的 version 保持同步，import 时直接读） */
+const TOOL_VERSION = pkg.version;
 
 /** manifest 条目名（ZIP 根；旧读取器不认识根条目会当普通文件忽略，无害） */
 export const MANIFEST_ENTRY = "manifest.json";

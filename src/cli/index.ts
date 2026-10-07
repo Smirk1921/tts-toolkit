@@ -18,6 +18,7 @@
 
 import { Command, CommanderError } from "commander";
 
+import pkg from "../../package.json" with { type: "json" };
 import { initI18n, t, type Lang } from "../i18n/index.js";
 import { assetsCommand } from "./commands/assets.js";
 import { buildCommand } from "./commands/build.js";
@@ -86,7 +87,7 @@ const program = new Command();
 program
   .name("tts")
   .description(t("cli.program.description"))
-  .version("0.1.0", "-V, --version", t("cli.option.version"))
+  .version(pkg.version, "-V, --version", t("cli.option.version"))
   .helpOption("-h, --help", t("cli.option.help"))
   .option("--lang <lang>", t("cli.option.lang"))
   .option("--dev", t("cli.option.dev"))

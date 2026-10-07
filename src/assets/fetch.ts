@@ -48,6 +48,7 @@
 import { ProxyAgent, request } from "undici";
 import { z } from "zod";
 
+import pkg from "../../package.json" with { type: "json" };
 import { isLangVariant, isLocalFileUrl, isMissingProtocol } from "../deck/patch.js";
 import { t } from "../i18n/index.js";
 import { PackError } from "../pack/packyaml.js";
@@ -75,7 +76,7 @@ const HEAD_UNSUPPORTED_STATUSES: readonly number[] = [405, 501];
 const REDIRECT_STATUSES: readonly number[] = [301, 302, 303, 307, 308];
 
 /** 请求 UA（与 check.ts 保持一致） */
-const USER_AGENT = "tts-toolkit/0.1.0";
+const USER_AGENT = `tts-toolkit/${pkg.version}`;
 
 /** 批次结束时关闭 ProxyAgent 的上限（毫秒），超时改强制 destroy（与 check.ts 一致） */
 const AGENT_CLOSE_TIMEOUT_MS = 2_000;

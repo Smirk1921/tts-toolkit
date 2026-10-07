@@ -411,8 +411,8 @@ describe("阶段 4 集成验收：hub 守护进程 + S2 控制通道 + CLI 委�
     // 1) spawn `node dist/mcp/main.js`（可加 `--lang zh-CN`；server.ts 只认
     //    "zh-CN"/"en-US"，非法值 stderr 告警后回退，见 server.ts:82-98 / :155-160）；
     // 2) 按 MCP stdio 协议写 initialize（protocolVersion / capabilities / clientInfo）
-    //    → 读响应，断言 `serverInfo.name === "tts-toolkit"`、`version === "0.1.0"`
-    //    （server.ts:57-61 / :163）；随后发 notifications/initialized；
+    //    → 读响应，断言 `serverInfo.name === "tts-toolkit"`、`version === pkg.version`
+    //    （与 package.json 同步；server.ts 从 pkg.version 读，不写死字符串）；
     //    可用 @modelcontextprotocol/server 的客户端 SDK（stdio 传输；InMemoryTransport
     //    亦可）或手写 JSON-RPC 行协议；
     // 3) 断言 stdout **只有协议 JSON**（无日志行），诊断只在 stderr（JSON Lines 英文，

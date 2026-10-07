@@ -43,6 +43,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 
+import pkg from "../../package.json" with { type: "json" };
 import { initI18n, type Lang } from "../i18n/index.js";
 import { HubClient } from "./client.js";
 import { register as registerAssets } from "./tools/assets.js";
@@ -61,8 +62,8 @@ import { register as registerTestRun } from "./tools/test-run.js";
 /** MCP 服务器名（MCP 客户端 initialize 时可见）。 */
 const SERVER_NAME = "tts-toolkit";
 
-/** MCP 服务器版本（与 package.json 的 version 保持一致）。 */
-const SERVER_VERSION = "0.1.0";
+/** MCP 服务器版本（与 package.json 的 version 保持一致，import 时直接读）。 */
+const SERVER_VERSION = pkg.version;
 
 /** `--lang` 参数的合法字面值（i18n 模块对显式 lang 不做猜测，只认全称）。 */
 function isSupportedLang(value: string | undefined): value is Lang {

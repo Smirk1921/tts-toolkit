@@ -98,12 +98,12 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import sharp from "sharp";
 import type { Metadata } from "sharp";
 
 import { decksDir, objectsDir, skeletonPath } from "../pack/layout.js";
 import { DECK_YAML_FILENAME, readDeckManifest, type DeckManifest } from "../pack/manifest.js";
 import { PackError } from "../pack/packyaml.js";
+import { loadSharp } from "../sharp-loader.js";
 
 import { cardIdToSlot } from "./cardid.js";
 import { CARDS_CSV_FILENAME, readCardsCsv, type CardRow } from "./cards.js";
@@ -317,6 +317,7 @@ async function resolveSheetFile(
 
 /** 读图集 / 卡图元数据；返回 null 表示 sharp 读不出（调用方按各自码报 issue）。 */
 async function readImageMeta(filePath: string): Promise<Metadata | null> {
+  const sharp = await loadSharp();
   try {
     return await sharp(filePath).metadata();
   } catch {

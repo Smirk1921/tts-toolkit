@@ -89,11 +89,11 @@ import { mkdir, readFile, stat } from "node:fs/promises";
 import type { Stats } from "node:fs";
 import path from "node:path";
 
-import sharp from "sharp";
 import type { OverlayOptions } from "sharp";
 
 import { t } from "../i18n/index.js";
 import { PackError } from "../pack/packyaml.js";
+import { loadSharp } from "../sharp-loader.js";
 
 import { slotToRect } from "./grid.js";
 import { CARDS_CSV_FILENAME, readCardsCsv, type CardRow } from "./cards.js";
@@ -330,6 +330,8 @@ async function rebuildSheet(
       t("error.pack.inplaceSourceMissing", { path: sourcePath }),
     );
   }
+
+  const sharp = await loadSharp();
 
   // 源图集实际尺寸 → cellSize 校验 / 推断
   const sourceMeta = await sharp(sourcePath).metadata();

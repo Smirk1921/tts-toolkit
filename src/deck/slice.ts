@@ -111,11 +111,10 @@
 import { access, mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 
-import sharp from "sharp";
-
 import { t } from "../i18n/index.js";
 import { PackError } from "../pack/packyaml.js";
 import { writeDeckManifest, type DeckManifest } from "../pack/manifest.js";
+import { loadSharp } from "../sharp-loader.js";
 
 import { CARDS_CSV_FILENAME, writeCardsCsv, type CardRow } from "./cards.js";
 import { cardIdToKey, cardIdToSlot, isValidCardId, slotToCardId } from "./cardid.js";
@@ -708,6 +707,7 @@ async function findLocalSheet(url: string, dir: string): Promise<string | undefi
  * @throws PackError code="SLICE_IMAGE_INVALID" sharp 读不出 / CMYK / 尺寸非法时
  */
 async function readImageSize(filePath: string, label: string): Promise<{ width: number; height: number }> {
+  const sharp = await loadSharp();
   let meta;
   try {
     meta = await sharp(filePath).metadata();
@@ -765,6 +765,7 @@ async function extractCell(
   rect: { left: number; top: number; width: number; height: number },
   destPath: string,
 ): Promise<void> {
+  const sharp = await loadSharp();
   await sharp(sheetPath).extract(rect).png().toFile(destPath);
 }
 
@@ -998,6 +999,7 @@ export async function sliceAtlas(opts: SliceOptions): Promise<SliceResult> {
       }
     } else {
       // UniqueBack=false：单张背面整图转 PNG
+      const sharp = await loadSharp();
       await sharp(backSource.filePath).png().toFile(path.join(opts.outDir, "back.png"));
       backFiles.push("back.png");
     }

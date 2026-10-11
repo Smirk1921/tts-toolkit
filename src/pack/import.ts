@@ -133,7 +133,6 @@ import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-import sharp from "sharp";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
@@ -143,6 +142,7 @@ import { MAX_SLOTS, inferGrid, type GridSpec } from "../deck/grid.js";
 import { OBJECTS_CSV_FILENAME, objectsCsvPath, readObjectsCsv, writeObjectsCsv, type ObjectRow } from "../deck/objects.js";
 import { createRegistry } from "../deck/types.js";
 import { t } from "../i18n/index.js";
+import { loadSharp } from "../sharp-loader.js";
 import { decksDir, objectsDir, sanitizeName } from "./layout.js";
 import { PackError, readPackYaml } from "./packyaml.js";
 
@@ -499,6 +499,7 @@ async function assertImageReadable(abs: string): Promise<void> {
   let height = -1;
   let space: string | undefined;
   try {
+    const sharp = await loadSharp();
     const meta = await sharp(abs).metadata();
     width = meta.width ?? -1;
     height = meta.height ?? -1;

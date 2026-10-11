@@ -85,10 +85,9 @@
 import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-import sharp from "sharp";
-
 import { t } from "../i18n/index.js";
 import { PackError } from "../pack/packyaml.js";
+import { loadSharp } from "../sharp-loader.js";
 
 import { CARDS_CSV_FILENAME, readCardsCsv, writeCardsCsv, type CardRow } from "./cards.js";
 import { cardIdToSlot } from "./cardid.js";
@@ -357,6 +356,8 @@ export async function generateAtlas(opts: GenerateOptions): Promise<GenerateResu
   }
 
   // ── 4. 卡图预检（存在性 + 尺寸闸门）：全部通过才开始写任何输出 ─────────
+  // sharp 延迟加载（pkg 静态分析红线）：本函数全部三处 sharp 调用共用这一次加载
+  const sharp = await loadSharp();
   for (const sheet of planned) {
     for (const card of sheet.cards) {
       const cardFile = cardPath(card, deckDir);

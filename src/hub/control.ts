@@ -5,6 +5,7 @@
  * 路由表（S2 12 条 + 阶段 7 的 /v1/test/run、/v1/pack/build + UI-1b 的
  * /v1/files/read、/v1/files/write；不暴露 pack export / pack import .ttsmod /
  * sync-upstream / review）：
+ * v9-3 新增：/v1/pack/import-ttsmod 例外，用于首次向导示例图包导入。
  *
  * | 方法 | 路由                      | 作用                                |
  * | ---- | ------------------------- | ----------------------------------- |
@@ -23,6 +24,7 @@
  * | GET  | /v1/events                | SSE 事件流                          |
  * | POST | /v1/test/run              | 跑 Lua 测试返回 RunReport（阶段 7） |
  * | POST | /v1/pack/build            | 工作区 → 存档 JSON → BSON（阶段 7） |
+ * | POST | /v1/pack/import-ttsmod    | .ttsmod → TTS 数据目录（v9-3）      |
  * | POST | /v1/files/read            | 读 root 内文件 → base64（UI-1b）    |
  * | PUT  | /v1/files/write           | 写文本文件进 root（UI-1b，乐观锁）  |
  *
@@ -116,6 +118,7 @@ import { buildSave } from "../pack/build.js";
 import { diffWorkspace } from "../pack/diff.js";
 import { importAssets } from "../pack/import.js";
 import { PackError } from "../pack/packyaml.js";
+import { importTtsmod } from "../archive/ttsmod.js";
 import { pullFromGame } from "../pack/pull.js";
 import { pushSaveAndPlay } from "../pack/push.js";
 import { findPack, readRegistry, registryPath } from "../pack/registry.js";
@@ -784,6 +787,7 @@ class ControlServerImpl implements ControlServer {
       ["/v1/push", (req, res) => this.handlePush(req, res)],
       ["/v1/test/run", (req, res) => this.handleTestRun(req, res)],
       ["/v1/pack/build", (req, res) => this.handlePackBuild(req, res)],
+      ["/v1/pack/import-ttsmod", (req, res) => this.handlePackImportTtsmod(req, res)],
       ["/v1/files/read", (req, res) => this.handleFilesRead(req, res)],
       ["/v1/hub/shutdown", (_req, res) => this.handleShutdown(res)],
     ]);
@@ -1540,6 +1544,98 @@ class ControlServerImpl implements ControlServer {
       response.headerLength = bson.headerLength;
     }
     sendJson(res, 200, response);
+  }
+
+  /**
+   * POST /v1/pack/import-ttsmod：把 `.ttsmod` 解入 TTS 数据目录（v9-3，首次
+   * 向导"打开示例图包"用）。**纯本地文件操作，不依赖 daemon.server**（不碰
+   * 39998 / 39999），与 CLI `tts pack import <文件.ttsmod>`（importTtsmod 形态，
+   * 非 --as-upstream）共用同一条底层流水线；--as-upstream 分支不上控制通道。
+   *
+   * 流程：
+   * 1. 字段校验（file / modsParentDir / modSaveLocation 三个必填路径在**路由层**
+   *    逐个校验：必须是字符串、trim 后非空、path.isAbsolute 绝对路径——任一不符
+   *    → 400 INVALID_INPUT 专用响应形；"文件不存在 / 不是 ZIP"属于业务错误，交由
+   *    importTtsmod 抛 PackError 落到 TTSMOD_INVALID）；
+   * 2. 整条导入委托 {@link importTtsmod}（`src/archive/ttsmod.ts`：Mods/ 前缀
+   *    条目 → modsParentDir、其余 → modSaveLocation、已存在不覆盖并逐条列出、
+   *    zip-slip 防护），本路由不重新实现；
+   * 3. PackError（code="TTSMOD_INVALID"：文件不存在 / 不是 ZIP / ZIP 结构损坏）
+   *    由 respondError 统一映射为 400 TTSMOD_INVALID；请求侧校验失败为
+   *    400 INVALID_INPUT——两者都是 400 `{ok:false, code, message}` 形（本路由
+   *    专有的响应形，见下方 respondWithTtsmodError）。
+   *
+   * 响应体 200：`{ok:true, warnings, objectsImported}`——warnings 是 importTtsmod
+   * 的全部用户可见告警（底层 t() 文案原样透传）；objectsImported 是实际写出的
+   * 文件数（importTtsmod 的 extracted）。
+   * @param req 进入的请求
+   * @param res 目标响应
+   */
+  private async handlePackImportTtsmod(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const body = await this.readJsonBody(req, res);
+    if (body === undefined) {
+      return;
+    }
+    // 路由层字段校验（不用 requireString——那个抛 BadRequestError 会落统一
+    // HUB_BAD_REQUEST 形；本路由的请求侧 400 契约是 INVALID_INPUT 专用形）：
+    // 三个路径字段逐个校验"字符串 + trim 非空 + 绝对路径"，首个违规即响应。
+    const fields: ReadonlyArray<readonly [string, unknown]> = [
+      ["file", body.file],
+      ["modsParentDir", body.modsParentDir],
+      ["modSaveLocation", body.modSaveLocation],
+    ];
+    for (const [field, value] of fields) {
+      if (typeof value !== "string" || value.trim() === "" || !path.isAbsolute(value)) {
+        this.respondWithTtsmodError(
+          res,
+          400,
+          "INVALID_INPUT",
+          `invalid field: ${field} (non-empty absolute path required)`,
+        );
+        return;
+      }
+    }
+    const file = body.file as string;
+    const modsParentDir = body.modsParentDir as string;
+    const modSaveLocation = body.modSaveLocation as string;
+    try {
+      const result = await importTtsmod(file, { modsParentDir, modSaveLocation });
+      sendJson(res, 200, {
+        ok: true,
+        warnings: result.warnings,
+        objectsImported: result.extracted,
+      });
+    } catch (err) {
+      if (err instanceof PackError) {
+        // 业务错误映射：TTSMOD_INVALID（文件不存在 / 不是 ZIP / 结构损坏）→ 400
+        this.respondWithTtsmodError(res, 400, err.code, err.message);
+        return;
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * 发送 /v1/pack/import-ttsmod 专有的 `{ok:false, code, message}` 错误响应体
+   * （400）。该路由的错误形与其余路由的 `{error:{code,message,details?}}` 不同：
+   * 这是 v9-3 契约拍板的专用响应形（成功体 `{ok:true,...}` 与错误体
+   * `{ok:false,...}` 同构，桌面 UI 首次向导按 `ok` 字段分支，不解析 error 嵌套）。
+   *
+   * 注意：请求侧通用错误（非 JSON 媒体类型 415 / 非法 JSON 400 等）仍走
+   * {@link sendAppError} 的统一 `{error:{...}}` 形——只有本路由**自身**判定的
+   * INVALID_INPUT 与底层 PackError（TTSMOD_INVALID）才用本形。
+   * @param res 目标响应
+   * @param status HTTP 状态码（恒 400）
+   * @param code 机器可读错误码（INVALID_INPUT / TTSMOD_INVALID）
+   * @param message 错误描述（协议层英文短句或底层 t() 文案原样透传）
+   */
+  private respondWithTtsmodError(
+    res: ServerResponse,
+    status: number,
+    code: string,
+    message: string,
+  ): void {
+    sendJson(res, status, { ok: false, code, message });
   }
 
   // -- UI-1b 文件路由（不注册为 MCP 工具——红线 15）---------------------------

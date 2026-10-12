@@ -7,6 +7,7 @@
 > **阶段 5（写入路径）修订（2026-10-05）**：已知问题 #1（hub 运行期 pull / diff 必 500）**已修复**——`pullFromGame` / `diffWorkspace` 增加 `server?: EditorServer` 注入，hub 路由传 `daemon.server` 复用已绑定的 39998（§4.2 / §4.10）；`POST /v1/push` 契约扩展为完整写入流水线（§4.11）。
 > **阶段 7（测试运行器 + 发布链路）修订（2026-10-06）**：新增 `POST /v1/test/run`（§4.13）与 `POST /v1/pack/build`（§4.14）——JSON 路由 **12 → 14 条**；`HubClient` 补 `testRun` / `packBuild`（§6.1）；MCP 工具 10 → 12 个（新增 `tts_test_run` / `tts_pack_build`，§7）。
 > **v0.8.0（桌面 UI 联通）修订（2026-10-07，UI-1b 窗口）**：新增 `POST /v1/files/read`（§4.15）与 `PUT /v1/files/write`（§4.16）——JSON 路由 **14 → 16 条**；`/v1/status` 响应加 `hub.version` / `hub.appMode`（§4.1）；新旗标 `tts hub --app-mode`（app 模式错误体 `details` 含 `userAction` 提示键，§3.2）；loopback CORS Origin 回显（§2）。**红线：`/v1/files/*` 不暴露为 MCP 工具**（防 MCP 越权读宿主机文件，§7）。
+> **v0.9.0（v9-3 窗口）修订（2026-10-12）**：新增 `POST /v1/pack/import-ttsmod`（§4.17）——JSON 路由 **16 → 17 条**。该路由是 §7 "不暴露 pack import .ttsmod" 约定在 v9-3 主窗口**拍板的例外**（首次向导"打开示例图包"经 hub 导入示例 .ttsmod）；其错误响应体为该路由专有的 `{ok:false, code, message}` 形（§4.17），不同于其余路由的 `{error:{...}}` 形。
 
 ---
 
@@ -115,7 +116,7 @@ hub 控制通道是 `tts hub` 常驻进程暴露的**本机 HTTP+JSON 控制面*
 
 ### 4.0 总览
 
-S2 控制面共 **12 条 JSON 路由**（下表 1–12 行）+ **1 条 SSE 事件流**（`GET /v1/events`，见 §5）；阶段 7（窗口 G）追加 2 条 JSON 路由（§4.13 / §4.14，下表 13 / 14 行）；v0.8.0（UI-1b 窗口）追加 2 条 JSON 路由（§4.15 / §4.16，下表 15 / 16 行，桌面 UI 文件读写专用），**JSON 路由合计 16 条**。
+S2 控制面共 **12 条 JSON 路由**（下表 1–12 行）+ **1 条 SSE 事件流**（`GET /v1/events`，见 §5）；阶段 7（窗口 G）追加 2 条 JSON 路由（§4.13 / §4.14，下表 13 / 14 行）；v0.8.0（UI-1b 窗口）追加 2 条 JSON 路由（§4.15 / §4.16，下表 15 / 16 行，桌面 UI 文件读写专用）；v0.9.0（v9-3 窗口）追加 1 条 JSON 路由（§4.17，下表 17 行，.ttsmod 导入），**JSON 路由合计 17 条**。
 
 | # | 方法 | 路径 | 作用 | 副作用 | 请求体 | 成功响应 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -135,6 +136,7 @@ S2 控制面共 **12 条 JSON 路由**（下表 1–12 行）+ **1 条 SSE 事�
 | 14 | POST | `/v1/pack/build` | 工作区 → 存档 JSON → BSON 载荷（阶段 7） | 写本地文件（`dryRun` 时无） | `{root, outPath?, dryRun?}` | `BsonBuildResult` + 诊断字段（§4.14） |
 | 15 | POST | `/v1/files/read` | 读取图包工作区内文件（base64，v0.8.0） | 无（只读） | `{root, path}` | `{base64, mime, size}`（§4.15） |
 | 16 | PUT | `/v1/files/write` | 写图包工作区内文本文件（乐观锁，v0.8.0） | 写本地文件 | `{root, path, content, baseSha256?}` | `{sha256, size}`（§4.16） |
+| 17 | POST | `/v1/pack/import-ttsmod` | .ttsmod → TTS 数据目录（v9-3） | 写本地文件 | `{file, modsParentDir, modSaveLocation}` | `{ok:true, warnings, objectsImported}`（§4.17） |
 
 所有 POST 路由通用的请求侧错误（400 / 404 / 405 / 413 / 415）见 §3；各小节只列该路由特有的错误。curl 示例假定 hub 在缺省端口 39995。
 
@@ -644,6 +646,49 @@ curl -s -X PUT http://127.0.0.1:39995/v1/files/write \
   -d '{"root":"D:/packs/第七大陆","path":"decks/冒险/notes.md","content":"# 新建\n"}'
 ```
 
+### 4.17 POST /v1/pack/import-ttsmod
+
+v0.9.0（v9-3 窗口）新增：把 `.ttsmod` 解入本机 TTS 数据目录（首次向导"打开示例图包"用）。整条导入流水线委托 `src/archive/ttsmod.ts` 的 `importTtsmod`（与 CLI `tts pack import <文件.ttsmod>` 非 `--as-upstream` 形态共用；`--as-upstream` 分支不上控制通道）。**纯本地文件操作，不依赖 `daemon.server`**（不碰 39998 / 39999）。
+
+> **与 §7 "不暴露 pack import .ttsmod" 的关系**：S2 原约定"纯本地解包不走控制通道"仍然成立——普通 CLI 用户走 `tts pack import` 本地直执。v9-3 主窗口拍板本路由作为**例外**：桌面 UI 首次向导需要经 hub 导入示例图包（`tts-desktop/examples/sample.ttsmod`），而 UI 进程不经 CLI。`control.ts` 头部路由表的例外说明行与 §7 的保留条款同步标注。
+
+- 请求体：
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `file` | string | ✅ | `.ttsmod` 文件**绝对路径**（trim 非空 + `path.isAbsolute`；相对路径 → 400 `INVALID_INPUT`） |
+| `modsParentDir` | string | ✅ | TTS 数据根目录（`Mods` 目录的**父目录**，`Mods/...` 条目解到这里） |
+| `modSaveLocation` | string | ✅ | ModSaveLocation（非 `Mods/...` 条目——如 `Saves/`——解到这里） |
+
+- 行为：`importTtsmod(file, {modsParentDir, modSaveLocation})`——`Mods/` 前缀条目（大小写不敏感）解到 `modsParentDir`、其余条目解到 `modSaveLocation`；**已存在的文件不覆盖**（原工具 DoNotOverwrite 语义，跳过的逐条进 `warnings`）；zip-slip 防护（`..` 段 / 绝对路径 / 盘符条目跳过并列出）；`manifest.json` 根条目只回读不落地。
+- 响应 200：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `ok` | 字面量 `true` | 固定 |
+| `warnings` | string[] | `importTtsmod` 的全部用户可见告警（底层 `t()` 文案原样透传，语言随 hub 进程 i18n 设置），无告警时空数组 |
+| `objectsImported` | number | 实际写出的文件数（`importTtsmod` 的 `extracted`；已存在跳过 / 不安全条目不计入） |
+
+- **本路由专有的错误响应形**：与其余路由的 `{error:{code,message,details?}}` 不同，本路由自身判定的请求侧 400 与底层业务 400 统一为 `{ok:false, code, message}`（与成功体 `{ok:true,...}` 同构，桌面 UI 首次向导按 `ok` 字段分支）：
+
+| HTTP | code | 触发 |
+| --- | --- | --- |
+| 400 | `INVALID_INPUT` | `file` / `modsParentDir` / `modSaveLocation` 缺失、非字符串、全空白或**相对路径**（message 指名违规字段） |
+| 400 | `TTSMOD_INVALID` | 底层 `PackError` 透传：文件不存在 / 不是 ZIP / ZIP 结构损坏（message 为底层 `t()` 文案原样透传） |
+| 415 | `HUB_UNSUPPORTED_MEDIA_TYPE` | Content-Type 不是 `application/json`（**统一形**，`{error:{...}}`——通用请求侧门不落本路由专用形） |
+| 405 | `HUB_METHOD_NOT_ALLOWED` | GET 本路由（响应带 `Allow: POST`，统一形）；404 路径拼错 |
+| 500 | `HUB_INTERNAL_ERROR` | 磁盘写入失败等普通 Error（统一形） |
+
+- curl：
+
+```bash
+curl -s -X POST http://127.0.0.1:39995/v1/pack/import-ttsmod \
+  -H "Content-Type: application/json" \
+  -d '{"file":"D:/tools/tts-desktop/examples/sample.ttsmod","modsParentDir":"D:/Games/Tabletop Simulator","modSaveLocation":"D:/Games/Tabletop Simulator"}'
+```
+
+- 单测：`tests/unit/hub-control-import-ttsmod.test.ts`（正常导入 / 文件不存在 / 非 ZIP / 空 modsParentDir / 相对路径 file，另附缺字段与非 JSON Content-Type 两个边界用例）。
+
 ---
 
 ## 5. SSE 事件流
@@ -738,7 +783,7 @@ S2 明确控制通道**不暴露**以下能力（`control.ts:5-6`、`施工流�
 | 能力 | 为什么不走控制通道 | 正确入口 |
 | --- | --- | --- |
 | `pack export`（`.ttsmod` 打包） | 纯本地读 + 写 ZIP，无需 TTS 会话 | `tts pack export`（本地直接执行） |
-| `pack import .ttsmod` | 纯本地解包，无需 TTS 会话 | `tts pack import`（本地直接执行） |
+| `pack import .ttsmod` | 纯本地解包，无需 TTS 会话（**v9-3 例外**：`/v1/pack/import-ttsmod` 为首次向导示例图包导入专设，§4.17） | `tts pack import`（本地直接执行）；桌面 UI 首次向导经 §4.17 |
 | `sync-upstream` | 上游仓库同步，不触碰游戏 | 对应本地命令 |
 | `review` | 评审流程（本地 diff / 门禁） | `tts review`（本地直接执行） |
 
@@ -772,3 +817,4 @@ S2 明确控制通道**不暴露**以下能力（`control.ts:5-6`、`施工流�
 | 2026-10-05 | 阶段 5（写入路径）Run 2 修订。① **已知问题 #1 修复落档**：`PullOptions.server` / `DiffOptions.server` 注入（`src/pack/pull.ts:93-99` / `src/pack/diff.ts:161-167`），hub 路由传 `daemon.server`（`control.ts:887` / `:1036`）——§4.2 / §4.10 的"待修"块改为"已修复"并补测试现状。② **§4.11 `/v1/push` 契约扩展**：请求体加 `dryRun` / `forceScriptsOnly` / `skipBackup` / `skipBaselineCheck` / `backupRetention` 五个可选字段，响应体改为 `{ok:true, dryRun, pushed, skipped, items(=pushed+skipped 兼容别名), backupDir?, baselineConflicts?, assetChanges?}`，错误码补 `PUSH_ASSET_CHANGES_DETECTED` / `BASELINE_CONFLICT` 等（经 `HUB_PACK_ERROR` + `details.packCode` 透传）。③ 依据行补 `src/pack/push.ts` / `src/safety/baseline.ts`；§3.3 / §3.4 / §6.1 / §6.2 同步 push 的新形状与注入语义；新增契约文档 `docs/schemas/baseline.json.md` 交叉引用。 |
 | 2026-10-06 | 阶段 7（窗口 G：测试运行器 + 发布链路）修订（子代理 C2）。① **新增 §4.13 `POST /v1/test/run`**：`discoverTests` + `TestRunner`（`server: daemon.server` 注入，坑 17），请求体 `{root, targetGuid?, timeoutMs?, bail?, bundle?, include?}`（`include` 为附加可选字段），响应 = `RunReport`；`details.packCode` 补 `TEST_RUN_*`。② **新增 §4.14 `POST /v1/pack/build`**：`buildSave` + `buildBson`（纯本地、不依赖 daemon.server），请求体 `{root, outPath?, dryRun?}`，响应 = `BsonBuildResult`（`{outPath, byteLength, headerLength}`）+ 诊断字段（`dryRun` / `jsonPath` / `warnings` / 四个替换计数），`dryRun` 下字节数恒 0。③ §4.0 总览表补 13 / 14 行、计数 12 → 14；§6.1 补 `testRun` / `packBuild`；§1 与 §7 的"MCP 10 个工具" → 12 个（新增 `tts_test_run` / `tts_pack_build`）。实现依据：`src/hub/control.ts:1193-1290`（两个 handler）、`src/mcp/client.ts`（`testRun` / `packBuild`）、`src/mcp/tools/test-run.ts` / `pack-build.ts`、`src/test/index.ts`（Stage A 桶文件）、`src/pack/build.ts`、`src/publish/bson.ts`。单测：`tests/unit/mcp-test-run.test.ts` / `tests/unit/mcp-pack-build.test.ts`。 |
 | 2026-10-07 | v0.8.0（桌面 UI 联通）修订（UI-1b 窗口）。① **新增 2 条文件路由**：§4.15 `POST /v1/files/read`（base64 + MIME 白名单 + 20MB 上限）与 §4.16 `PUT /v1/files/write`（仅文本、1MB 上限、`baseSha256` 乐观锁，不符 → 409；PUT 而非 POST 为已确认决策，dispatch 扩为 GET/POST/PUT 三路）——路径防护均为已注册图包限定 + resolve 前缀校验 + symlink 真实路径校验；新错误码 `HUB_PATH_ESCAPE`（400）/ `HUB_CONFLICT`（409）/ `HUB_FILE_TOO_LARGE`（413）（§3.3）；§4.0 总览补 15 / 16 行、计数 **14 → 16**；§6.1 补 `filesRead` / `filesWrite`。**红线 15：`/v1/files/*` 不暴露为 MCP 工具**（§7 同步修订）。② **§4.1 `/v1/status` 增强**：响应体加 `hub.version`（取自 tts-toolkit `package.json`）与 `hub.appMode`，补版本兼容语义（旧 hub 缺字段视为旧版）。③ **app 模式**：新 CLI 旗标 `tts hub --app-mode <standalone\|app>`（白名单校验）与环境变量 `TTS_HUB_APP_MODE`（`tts-hub` bin 保持零旗标，经 `lifecycle.ts` 的 `runHubProcess` 解析链透传）；app 模式下错误体 `details` 可能含 `userAction` 提示键（§3.2），standalone 不注入。④ **§2 CORS**：loopback-only Origin 回显（`null` / `localhost` / `127.0.0.1` / `[::1]`）。⑤ 读写体的 1MB 上限与 `Content-Type` 校验口径从"POST 路由"扩为"POST 路由 + `PUT /v1/files/write`"（§2 / §3.1 / §3.3）。实现依据：`src/hub/control.ts`（files 路由 + CORS + appMode + `hub.version`）、`src/mcp/client.ts`（`filesRead` / `filesWrite`）、`src/hub/lifecycle.ts` + `src/cli/commands/hub.ts`（app-mode）、`locales/*.json`（`cli.hub.option.appMode`）。单测：`tests/unit/hub-control-files.test.ts`（agentD）。 |
+| 2026-10-12 | v0.9.0（v9-3 窗口）修订（子代理 A1）。**新增 §4.17 `POST /v1/pack/import-ttsmod`**：`.ttsmod` → TTS 数据目录（首次向导"打开示例图包"用），整条导入委托 `src/archive/ttsmod.ts` 的 `importTtsmod`（纯本地、不依赖 daemon.server）；请求体 `{file, modsParentDir, modSaveLocation}`（三个必填绝对路径，路由层校验 trim + 非空 + `path.isAbsolute`），响应 200 `{ok:true, warnings, objectsImported(=extracted)}`；**错误响应为该路由专有的 `{ok:false, code, message}` 形**（`INVALID_INPUT` / `TTSMOD_INVALID`，均 400；通用请求侧门 415 等仍是统一 `{error:{...}}` 形）。§4.0 总览补 17 行、计数 **16 → 17**；§7 的"不暴露 pack import .ttsmod"补 v9-3 例外标注（`pack export` 保留不变）。本路由不注册为 MCP 工具、`HubClient` 不加对应方法（消费方只有桌面 UI，直连 hub）。实现依据：`src/hub/control.ts`（`handlePackImportTtsmod` / `respondWithTtsmodError` + 头部例外说明行）、`src/archive/ttsmod.ts:1093`（`importTtsmod`）。单测：`tests/unit/hub-control-import-ttsmod.test.ts`。 |

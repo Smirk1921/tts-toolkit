@@ -187,11 +187,13 @@ const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
 };
 
 /**
- * CORS 白名单来源：字面 "null"（file:// / 沙箱 iframe 场景）或 http(s) 的
- * loopback 主机（localhost / 127.0.0.1 / [::1]，任意端口）。其余来源
- * （含 http://tauri.localhost / 局域网地址 / 公网域名）一律不发 CORS 头。
+ * CORS 白名单来源：字面 "null"（file:// / 沙箱 iframe 场景）、http(s) 的
+ * loopback 主机（localhost / 127.0.0.1 / [::1]，任意端口），以及 Tauri 2
+ * webview 的 http(s)://tauri.localhost（v9-4 hotfix：UI 经 fetch 调 hub 时
+ * Origin 是 tauri.localhost，不放行则所有 /v1/* 被浏览器 CORS 拦截）。
+ * 其余来源（局域网地址 / 公网域名）一律不发 CORS 头。
  */
-const CORS_ALLOWED_ORIGIN_PATTERN = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i;
+const CORS_ALLOWED_ORIGIN_PATTERN = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]|tauri\.localhost)(?::\d+)?$/i;
 
 /**
  * appMode === "app" 时错误码 → details.userAction 提示键的专用映射

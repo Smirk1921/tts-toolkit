@@ -460,6 +460,14 @@ describe('loopback CORS（UI-1b）', () => {
     expect(res.headers.get('vary')).toBe('Origin');
   });
 
+  it('Tauri webview Origin（http://tauri.localhost）→ 回显 Access-Control-Allow-Origin（v9-4 hotfix）', async () => {
+    const { base } = await startStack();
+    const res = await fetch(`${base}/status`, { headers: { Origin: 'http://tauri.localhost' } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('access-control-allow-origin')).toBe('http://tauri.localhost');
+    expect(res.headers.get('vary')).toBe('Origin');
+  });
+
   it('非白名单 Origin（http://evil.com）→ 不发任何 CORS 头', async () => {
     const { base } = await startStack();
     const res = await fetch(`${base}/status`, { headers: { Origin: 'http://evil.com' } });

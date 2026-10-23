@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > Phase tags (`v0.x.0-phaseN`) are annotated on the corresponding commits for
 > historical reference; the npm-published version drops the `-phaseN` suffix.
 
+## [0.9.0] - 2026-10-23 — Standalone executables for installer integration
+
+### Added
+
+- **Standalone executables (v9-1/v9-2)**: 3 standalone executables (`tts.exe` / `tts-hub.exe` / `tts-mcp.exe`) produced via Plan E (Node.js runtime + dist/ + node_modules bundled) or Plan A (esbuild CJS bundle + vercel/pkg with sharp native assets externalized to `native/`). Used by tts-desktop installer to provide a zero-Node-required setup.
+- **sharp-loader (v9-1)**: refactored 6 sharp import sites (verify/generate/slice/inplace/pack-import) to dynamic import + centralized loading logic in `src/sharp-loader.ts`, enabling pkg to skip static analysis on sharp.
+- **hub**: POST /v1/pack/import-ttsmod route (v9-3) for importing .ttsmod packages into a pack workspace; contract §4.17 added.
+
+### Changed
+
+- All sharp call sites now use `await loadSharp()` from `src/sharp-loader.ts` instead of top-level `import sharp from "sharp"` (v9-1).
+- All 7 hardcoded version strings read from `pkg.version` (already in v0.8.0; verified still working).
+
+### Fixed
+
+- **hub CORS**: `CORS_ALLOWED_ORIGIN_PATTERN` now accepts `tauri.localhost` origin (v9-4 hotfix-1) — required for Tauri 2 webview to reach the hub.
+
+### Build
+
+- New scripts `npm run bundle` (esbuild) and `npm run pkg:build` (pkg) for Plan A artifacts.
+- `product/` directory layout for Plan E artifacts.
+- Test baseline: 2066 passed / 0 failed (v9-4 完工时基线，本窗口 Stage A 新增 1 用例后应为 2067)。
+
 ## [0.8.0] - 2026-10-08 — Desktop UI + hub contract extension
 
 ### Added

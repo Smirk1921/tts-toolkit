@@ -6,6 +6,8 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // 坑 46：剥掉环境代理变量，防 hub 单测打 127.0.0.1 被坏代理拦截（见 tests/setup/no-proxy.ts）
+    setupFiles: ["tests/setup/no-proxy.ts"],
     maxWorkers: 2,
     minWorkers: 1,
     // 单个测试默认 5s 对构造 git merge 冲突的用例不够，放宽到 30s

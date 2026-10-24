@@ -12,5 +12,7 @@ kp_steam*.log
 tests/fixtures/original/
 # v9-1 可执行产物 POC 产物目录（~150-200MB 二进制，不入库）。
 product/
-dist-bundle/
-dist-pkg/
+product-dry-run/
+# 坑 46 配套卫生（v0.9.1 T4）：用户以仓库内目录做 packsRoot 时 registry 会落在仓库根，
+# 该文件是本机运行时状态，不入库（v9-4 验收时曾残留指向不存在目录的死数据）。
+.registry.yaml

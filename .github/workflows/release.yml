@@ -19,7 +19,7 @@ env:
 
 permissions:
   id-token: write  # npm provenance
-  contents: read
+  contents: write  # v0.9.1 T5：gh release create 需要写权限
 
 jobs:
   publish:
@@ -75,3 +75,10 @@ jobs:
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # v0.9.1 T5：npm 发布成功后自动建 GitHub Release（此前是发版后手动建，
+      # v9-final 遗留）。幂等兜底：若 Release 已被手动创建过则仅查看，不失败。
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --verify-tag || gh release view "$GITHUB_REF_NAME"
